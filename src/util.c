@@ -208,6 +208,14 @@ vec3f_t vec3f_reflect(vec3f_t v, vec3f_t n)
     return vec3f_sub(v, vec3f_scale(n, 2.0f*vec3f_dot(v, n)));
 }
 
+vec3f_t vec3f_refract(vec3f_t v, vec3f_t n, float e)
+{
+    float cos_theta = fmin(vec3f_dot(vec3f_scale(v, -1.0f), n), 1.0f);
+    vec3f_t r_out_perp = vec3f_scale(vec3f_add(v, vec3f_scale(n, cos_theta)), e);
+    vec3f_t r_out_parallel = vec3f_scale(n, -1.0f*sqrt_f32(abs_f32(1.0f-vec3f_length_sq(r_out_perp))));
+    return vec3f_add(r_out_perp, r_out_parallel);
+}
+
 /*
     Column major order
 */

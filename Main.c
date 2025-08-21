@@ -58,8 +58,9 @@ enum material_type
 typedef struct material_t
 {
     enum material_type mat_type;
-    vec3f_t albedo;        // whiteness
-    float fuzz;
+    vec3f_t albedo;                 // whiteness
+    float fuzz;                     // Lambertian
+    float refraction_index;         // Dielectric
 }material_t;
 
 typedef struct hit_record_t
@@ -180,15 +181,23 @@ int scene_array_remove(scene_objects_t* array, size_t index)
     return 0; // Success
 }
 
+/* 
+    We can determine if the ray is inside or outside the sphere.
+    by doing the dot product of the ray direction and the outward normal.
+    If the dot product is positive, the ray is inside the sphere.
+    If it is negative, the ray is outside the sphere. 
+*/
 void set_face_normal(hit_record_t *record, ray_t *ray, vec3f_t *outward_normal)
 {
     record->front_face = vec3f_dot(ray->dir, *outward_normal) < 0;
     if(record->front_face)
-{
+    {
+        // ray is outside the sphere
         record->norm = *outward_normal;
     }
     else
     {
+        // ray is inside the sphere
         record->norm = vec3f_scale(*outward_normal, -1.0f);
     }
 }
@@ -797,6 +806,13 @@ fn void render_prof_entries(void)
     }
 }
 
+f32 reflectance(float cosine, float refraction_index)
+{
+    float r0 = (1-refraction_index)/(1+refraction_index);
+    r0 = r0*r0;
+    return r0 + (1-r0)*((1-cosine)*(1-cosine)*(1-cosine)*(1-cosine)*(1-cosine));
+}
+
 bool ray_scatter(ray_t *ray_in, hit_record_t *hit_info, vec3f_t *attenuation, ray_t *ray_scattered)
 {
     switch (hit_info->mat.mat_type) 
@@ -821,6 +837,30 @@ bool ray_scatter(ray_t *ray_in, hit_record_t *hit_info, vec3f_t *attenuation, ra
             return (vec3f_dot(ray_scattered->dir , hit_info->norm) > 0);
             break;
         case Dielectric:
+            *attenuation = (vec3f_t){1.0f,1.0f,1.0f};
+            f32 ri = hit_info->front_face ? (1.0f/hit_info->mat.refraction_index) : hit_info->mat.refraction_index;
+
+            vec3f_t unit_direction = vec3f_unit(ray_in->dir);
+
+            f32 cos_theta = fmin(vec3f_dot(vec3f_scale(unit_direction,-1.0f), hit_info->norm), 1.0f);
+            f32 sin_theta = sqrt_f32(1.0f-cos_theta*cos_theta);
+
+            bool cannot_refract = ri * sin_theta > 1.0;
+            vec3f_t direction;
+
+            if(cannot_refract || reflectance(cos_theta,ri) > RAND_FLOAT())
+            {
+
+                direction = vec3f_reflect(unit_direction, hit_info->norm);
+            }
+            else
+            {
+                direction = vec3f_refract(unit_direction, hit_info->norm, ri);
+            }
+
+            *ray_scattered = (ray_t){hit_info->hit_point, direction};
+            return true;
+
         case Emissive:
         default:
             break;
@@ -1274,6 +1314,7 @@ sphere_t sphere_1;
 sphere_t sphere_2;
 sphere_t sphere_3;
 sphere_t sphere_4;
+sphere_t sphere_5;
 
 fn bool init_all(void)
 {
@@ -1303,15 +1344,33 @@ fn bool init_all(void)
         .radius = 0.5f
     };
 
+    // sphere_3 = (sphere_t){
+    //     .mat = {
+    //         .mat_type = Metal,
+    //         .albedo = {0.8, 0.8, 0.8},
+    //         .fuzz = 0.3f
+    //     },
+    //     .center = (vec3f_t){-1.0f, 0.0f, -1.0f},
+    //     .radius = 0.5f
+    // };
     sphere_3 = (sphere_t){
         .mat = {
-            .mat_type = Metal,
-            .albedo = {0.8, 0.8, 0.8},
-            .fuzz = 0.3f
+            .mat_type = Dielectric,
+            .refraction_index = 1.5f
         },
         .center = (vec3f_t){-1.0f, 0.0f, -1.0f},
         .radius = 0.5f
     };
+
+    sphere_5 = (sphere_t){
+        .mat = {
+            .mat_type = Dielectric,
+            .refraction_index = 1.0f/1.5f
+        },
+        .center = (vec3f_t){-1.0f, 0.0f, -1.0f},
+        .radius = 0.4f
+    };
+
 
     sphere_4 = (sphere_t){
         .mat = {
@@ -1327,6 +1386,8 @@ fn bool init_all(void)
     scene_array_add(gc.scene_objects, (scene_object_t) {.type=SPHERE,.object=&sphere_2});
     scene_array_add(gc.scene_objects, (scene_object_t) {.type=SPHERE,.object=&sphere_3});
     scene_array_add(gc.scene_objects, (scene_object_t) {.type=SPHERE,.object=&sphere_4});
+    scene_array_add(gc.scene_objects, (scene_object_t) {.type=SPHERE,.object=&sphere_5});
+
 
     gc.window = initGL(gc.screen_width, gc.screen_height);
 

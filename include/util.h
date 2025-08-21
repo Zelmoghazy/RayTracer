@@ -274,6 +274,7 @@ vec3f_t vec3f_random_range(float min, float max);
 vec3f_t vec3f_random_direction();
 bool vec3f_is_near_zero(vec3f_t vec);
 vec3f_t vec3f_reflect(vec3f_t v, vec3f_t n);
+vec3f_t vec3f_refract(vec3f_t v, vec3f_t n, float e);
 
 
 mat4x4_t mat4x4_mult(mat4x4_t const *m, mat4x4_t const *n);
