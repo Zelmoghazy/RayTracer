@@ -1,0 +1,26 @@
+[
+  {
+    "directory": "C:\\Users\\zezo_\\Desktop\\Programming\\RayTracer\\build",
+    "command": "cl /Zi /EHsc /D_AMD64_ /W4 /MD /nologo /utf-8 /std:c17 /arch:AVX /I..\\include /I..\\external\\include\\ /O2 /c ..\\Main.c",
+    "file": "..\\Main.c",
+    "output": "Main.obj"
+  },
+  {
+    "directory": "C:\\Users\\zezo_\\Desktop\\Programming\\RayTracer\\build",
+    "command": "cl /Zi /EHsc /D_AMD64_ /W4 /MD /nologo /utf-8 /std:c17 /arch:AVX /I..\\include /I..\\external\\include\\ /O2 /c ..\\src\\util.c",
+    "file": "..\\src\\util.c",
+    "output": "util.obj"
+  },
+  {
+    "directory": "C:\\Users\\zezo_\\Desktop\\Programming\\RayTracer\\build",
+    "command": "cl /Zi /EHsc /D_AMD64_ /W4 /MD /nologo /utf-8 /std:c17 /arch:AVX /I..\\include /I..\\external\\include\\ /O2 /c ..\\src\\arena.c",
+    "file": "..\\src\\arena.c",
+    "output": "arena.obj"
+  },
+  {
+    "directory": "C:\\Users\\zezo_\\Desktop\\Programming\\RayTracer\\build",
+    "command": "cl /Zi /EHsc /D_AMD64_ /W4 /MD /nologo /utf-8 /std:c17 /arch:AVX /I..\\include /I..\\external\\include\\ /O2 /c ..\\external\\src\\glad.c",
+    "file": "..\\external\\src\\glad.c",
+    "output": "glad.obj"
+  }
+]
