@@ -11,3 +11,15 @@
        width="100%" 
        style="border-radius: 30px;"/>
 </p>
+
+<p align="center">
+  <img src="./Images/blur.png"
+       width="100%" 
+       style="border-radius: 30px;"/>
+</p>
+
+<p align="center">
+  <img src="./Images/first_weekend.png"
+       width="100%" 
+       style="border-radius: 30px;"/>
+</p>

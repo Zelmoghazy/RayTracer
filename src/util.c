@@ -197,6 +197,22 @@ vec3f_t vec3f_random_direction()
     return (vec3f_t){0.0f,0.0f,0.0f};
 }
 
+vec3f_t vec3f_random_direction_2d(void)
+{
+    for(size_t i = 0; i < 100; i++)
+    {
+        vec3f_t point_in_plane = {RAND_FLOAT_RANGE(-1, 1), RAND_FLOAT_RANGE(-1, 1), 0.0f};
+        f32 lensq = vec3f_length_sq(point_in_plane);
+
+        // check if the point is inside a unit sphere
+        if(1e-15 < lensq && lensq <= 1)
+        {
+            return point_in_plane;
+        }
+    }
+    return (vec3f_t){0.0f,0.0f,0.0f};
+}
+
 bool vec3f_is_near_zero(vec3f_t vec)
 {
     f32 s = 1e-8;

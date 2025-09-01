@@ -60,6 +60,14 @@ typedef struct Camera
     vec3f_t w;
 
     f32 vfov;
+    f32 speed;
+
+    f32 defocus_angle;
+    f32 focus_dist;
+
+    vec3f_t defocus_disk_u;
+    vec3f_t defocus_disk_v;
+
 }Camera;
 
 enum material_type
@@ -74,15 +82,15 @@ typedef struct material_t
 {
     enum material_type mat_type;
     vec3f_t albedo;                 // whiteness
-    float fuzz;                     // Lambertian
-    float refraction_index;         // Dielectric
+    f32 fuzz;                     // Lambertian
+    f32 refraction_index;         // Dielectric
 }material_t;
 
 typedef struct hit_record_t
 {
     vec3f_t hit_point;      
     vec3f_t norm;
-    float hit_dist;
+    f32 hit_dist;
     material_t mat;
     bool front_face;
 }hit_record_t;
@@ -107,7 +115,7 @@ typedef struct scene_objects_t
 typedef struct sphere_t 
 {
     vec3f_t    center;
-    float      radius;
+    f32      radius;
     material_t mat;
 }sphere_t;
 
@@ -304,30 +312,30 @@ void window_refresh_callback(GLFWwindow* window)
     glfwSwapBuffers(window);
 }
 
-void getMouseDelta(float *xoffset, float *yoffset)
+void getMouseDelta(f32 *xoffset, f32 *yoffset)
 {
     if (gc.firstMouse)
     {
-        gc.mouseLastX = (float)gc.mouseX;
-        gc.mouseLastY = (float)gc.mouseY;
+        gc.mouseLastX = (f32)gc.mouseX;
+        gc.mouseLastY = (f32)gc.mouseY;
         gc.firstMouse = false;
     }
 
-    *xoffset = (float)gc.mouseX - gc.mouseLastX;
-    *yoffset = gc.mouseLastY - (float)gc.mouseY; // reversed since y-coordinates range from bottom to top
+    *xoffset = (f32)gc.mouseX - gc.mouseLastX;
+    *yoffset = gc.mouseLastY - (f32)gc.mouseY; // reversed since y-coordinates range from bottom to top
 
-    gc.mouseLastX = (float)gc.mouseX;
-    gc.mouseLastY = (float)gc.mouseY;
+    gc.mouseLastX = (f32)gc.mouseX;
+    gc.mouseLastY = (f32)gc.mouseY;
 }
 
 void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 {
     (void)window;
 
-    gc.mouseX = (float)xpos;
-    gc.mouseY = (float)ypos;
+    gc.mouseX = (f32)xpos;
+    gc.mouseY = (f32)ypos;
 
-    float xoffset, yoffset;
+    f32 xoffset, yoffset;
     getMouseDelta(&xoffset, &yoffset);
 }
 
@@ -341,7 +349,7 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
 void increase_fov() {
     gc.camera.vfov += 5.0f;
     if (gc.camera.vfov > 120.0f) {
-        gc.camera.vfov = 120.0f; // Clamp to reasonable maximum
+        gc.camera.vfov = 120.0f; 
     }
     update_camera_view();
 }
@@ -349,7 +357,7 @@ void increase_fov() {
 void decrease_fov() {
     gc.camera.vfov -= 5.0f;
     if (gc.camera.vfov < 10.0f) {
-        gc.camera.vfov = 10.0f; // Clamp to reasonable minimum
+        gc.camera.vfov = 10.0f; 
     }
     update_camera_view();
 }
@@ -361,7 +369,6 @@ void set_fov(f32 new_fov) {
     update_camera_view();
 }
 
-// For fine adjustments
 void adjust_fov(f32 delta) {
     gc.camera.vfov += delta;
     if (gc.camera.vfov < 10.0f) gc.camera.vfov = 10.0f;
@@ -390,19 +397,19 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
                 gc.camera_mode ^= 1;
                 if(gc.camera_mode)
                 {
-                    gc.samples_per_pixel = 2;
+                    gc.samples_per_pixel = 1;
                     gc.max_depth = 2;
                 }else
                 {
-                    gc.samples_per_pixel = 100;
-                    gc.max_depth = 100;
+                    gc.samples_per_pixel = 50;
+                    gc.max_depth = 50;
                 }
                 break;
             case GLFW_KEY_W:
                 if(gc.camera_mode)
                 {
                     vec3f_t front = vec3f_scale(gc.camera.w, -1.0f);
-                    gc.camera.pos = vec3f_add(gc.camera.pos,vec3f_scale(front, 2.5f));
+                    gc.camera.pos = vec3f_add(gc.camera.pos,vec3f_scale(front, gc.camera.speed));
                     update_camera_view();
                 }
                 break;
@@ -410,14 +417,14 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
                 if(gc.camera_mode)
                 {
                     vec3f_t front = vec3f_scale(gc.camera.w, -1.0f);
-                    gc.camera.pos = vec3f_sub(gc.camera.pos,vec3f_scale(front, 2.5f));
+                    gc.camera.pos = vec3f_sub(gc.camera.pos,vec3f_scale(front, gc.camera.speed));
                     update_camera_view();
                 }
                 break;
             case GLFW_KEY_D:
                 if(gc.camera_mode)
                 {
-                    vec3f_t right_scaled = vec3f_scale(gc.camera.u, 2.5f);
+                    vec3f_t right_scaled = vec3f_scale(gc.camera.u, gc.camera.speed);
                     gc.camera.pos = vec3f_add(gc.camera.pos, right_scaled);
                     update_camera_view();
                 }
@@ -425,7 +432,7 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
             case GLFW_KEY_A:
                 if(gc.camera_mode)
                 {
-                    vec3f_t right_scaled = vec3f_scale(gc.camera.u, 2.5f);
+                    vec3f_t right_scaled = vec3f_scale(gc.camera.u, gc.camera.speed);
                     gc.camera.pos = vec3f_sub(gc.camera.pos, right_scaled);
                     update_camera_view();
                 }
@@ -433,7 +440,7 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
             case GLFW_KEY_UP:
                 if(gc.camera_mode)
                 {
-                    vec3f_t up_scaled = vec3f_scale(gc.camera.up, 2.5f);
+                    vec3f_t up_scaled = vec3f_scale(gc.camera.up, gc.camera.speed);
                     gc.camera.pos = vec3f_add(gc.camera.pos, up_scaled);
                     update_camera_view();
                 }
@@ -441,7 +448,7 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
             case GLFW_KEY_DOWN:
                 if(gc.camera_mode)
                 {
-                    vec3f_t up_scaled = vec3f_scale(gc.camera.up, 2.5f);
+                    vec3f_t up_scaled = vec3f_scale(gc.camera.up, gc.camera.speed);
                     gc.camera.pos = vec3f_sub(gc.camera.pos, up_scaled);
                     update_camera_view();
                 }
@@ -927,9 +934,9 @@ void set_face_normal(hit_record_t *record, ray_t *ray, vec3f_t *outward_normal)
 }
 
 
-f32 reflectance(float cosine, float refraction_index)
+f32 reflectance(f32 cosine, f32 refraction_index)
 {
-    float r0 = (1-refraction_index)/(1+refraction_index);
+    f32 r0 = (1-refraction_index)/(1+refraction_index);
     r0 = r0*r0;
     return r0 + (1-r0)*((1-cosine)*(1-cosine)*(1-cosine)*(1-cosine)*(1-cosine));
 }
@@ -996,7 +1003,7 @@ bool ray_scatter(ray_t *ray_in, hit_record_t *hit_info, vec3f_t *attenuation, ra
 /*
     Check if the ray hits a sphere
 */
-bool hit_sphere(sphere_t *sphere, ray_t *ray, float ray_tmin, float ray_tmax, hit_record_t *hit_info)
+bool hit_sphere(sphere_t *sphere, ray_t *ray, f32 ray_tmin, f32 ray_tmax, hit_record_t *hit_info)
 {
     // vector from ray origin to the sphere
     vec3f_t oc = vec3f_sub(sphere->center, ray->orig);
@@ -1019,19 +1026,19 @@ bool hit_sphere(sphere_t *sphere, ray_t *ray, float ray_tmin, float ray_tmax, hi
         t = (h ± √(h² - ac)) / a
 
     */
-    float a = vec3f_length_sq(ray->dir);
-    float h = vec3f_dot(ray->dir, oc);
-    float c = vec3f_length_sq(oc) - sphere->radius * sphere->radius;
+    f32 a = vec3f_length_sq(ray->dir);
+    f32 h = vec3f_dot(ray->dir, oc);
+    f32 c = vec3f_length_sq(oc) - sphere->radius * sphere->radius;
 
     // is there real solutions ?
-    float discriminant = h*h - a*c;
+    f32 discriminant = h*h - a*c;
     if(discriminant < 0){
         // no intersection
         return false;
     }
 
-    float disc_sqrt = sqrt_f32(discriminant);
-    float root = (h - disc_sqrt) / (a); // distance to the CLOSER hit point (entry point)
+    f32 disc_sqrt = sqrt_f32(discriminant);
+    f32 root = (h - disc_sqrt) / (a); // distance to the CLOSER hit point (entry point)
 
     if(!Surrounds(root, ray_tmin, ray_tmax))
     {
@@ -1050,7 +1057,7 @@ bool hit_sphere(sphere_t *sphere, ray_t *ray, float ray_tmin, float ray_tmax, hi
     // calculate the surface normal at the hit point
     // where normal = (hit_point - sphere_center)
     // outward_normal have unit length so divide the sphere radius.
-    vec3f_t surface_notmal = vec3f_scale(vec3f_sub(hit_info->hit_point, sphere->center), 1.0f/(float)sphere->radius);
+    vec3f_t surface_notmal = vec3f_scale(vec3f_sub(hit_info->hit_point, sphere->center), 1.0f/(f32)sphere->radius);
 
     set_face_normal(hit_info, ray, &surface_notmal);
 
@@ -1059,11 +1066,11 @@ bool hit_sphere(sphere_t *sphere, ray_t *ray, float ray_tmin, float ray_tmax, hi
     return true;
 }
 
-bool hit(scene_objects_t *arr, ray_t *ray, float ray_tmin, float ray_tmax, hit_record_t *hit_info)
+bool hit(scene_objects_t *arr, ray_t *ray, f32 ray_tmin, f32 ray_tmax, hit_record_t *hit_info)
 {
     hit_record_t temp_rec;
     bool hit_anything = false;
-    float closest = ray_tmax;
+    f32 closest = ray_tmax;
 
     for(size_t i = 0; i < arr->count; i++)
     {
@@ -1121,7 +1128,7 @@ vec3f_t ray_color(ray_t ray, int depth)
             vec3f_t unit_dir = vec3f_unit(current_ray.dir);
         
             // gradient among the y-axis
-            float blend_factor = 0.5 * (unit_dir.y + 1.0);
+            f32 blend_factor = 0.5 * (unit_dir.y + 1.0);
         
             vec3f_t col_norm = vec3f_lerp(
                 (vec3f_t){1.0,1.0,1.0}, // white 
@@ -1140,6 +1147,12 @@ vec3f_t sample_square()
 {
     // Returns the vector to a random point in the [-.5,-.5]-[+.5,+.5] unit square.
     return (vec3f_t){RAND_FLOAT() - 0.5, RAND_FLOAT() - 0.5, 0};
+}
+
+vec3f_t defocus_disk_sample()
+{
+    vec3f_t p = vec3f_random_direction_2d();
+    return vec3f_add(gc.camera.pos, vec3f_add(vec3f_scale(gc.camera.defocus_disk_u, p.x), vec3f_scale(gc.camera.defocus_disk_v, p.y)));
 }
 
 ray_t get_ray(int x, int y)
@@ -1162,7 +1175,7 @@ ray_t get_ray(int x, int y)
         .z = gc.pixel00_loc.z + ((x+offset.x) * gc.pixel_delta_u.z) + ((y+offset.y) * gc.pixel_delta_v.z)
     };
 
-    vec3f_t ray_origin = gc.camera.pos;
+    vec3f_t ray_origin = (gc.camera.defocus_angle <= 0 ) ? gc.camera.pos : defocus_disk_sample();
     // The vector from the camera center to the pixel center.
     vec3f_t ray_dir = vec3f_sub(pixel_sample, ray_origin);
 
@@ -1223,7 +1236,7 @@ fn void render_all(void)
                         ray_t ray = get_ray(x, y);
                         color = vec3f_add(color, ray_color(ray, gc.max_depth));
                     }
-                    color = vec3f_scale(color, (float)1.0f/(float)gc.samples_per_pixel);
+                    color = vec3f_scale(color, (f32)1.0f/(f32)gc.samples_per_pixel);
                     color = linear_to_gamma(color);
                 }
                 PROFILE("Just putting a pixel")
@@ -1231,6 +1244,7 @@ fn void render_all(void)
                     put_pixel(&gc.draw_buffer, x, y, to_color4(color));
                 }
             }
+            if(y%8)present_frame(&gc.draw_buffer);
         }
     }
 
@@ -1291,11 +1305,12 @@ void update_camera_view()
     */
 
     // distance from camera to the viewport
-    f32 focal_length = vec3f_length(vec3f_sub(gc.camera.pos, gc.camera.target));
+    // f32 focal_length = vec3f_length(vec3f_sub(gc.camera.pos, gc.camera.target));
+
     f32 theta = radians_from_degrees_f32(gc.camera.vfov);
     f32 h = tan_f32(theta/2.0f);
 
-    f32 vp_height = 2.0f * h * focal_length;
+    f32 vp_height = 2.0f * h * gc.camera.focus_dist;
     f32 vp_width = vp_height * ((f32)gc.screen_width/(f32)gc.screen_height);
 
     gc.camera.w = vec3f_unit(vec3f_sub(gc.camera.pos, gc.camera.target));
@@ -1315,7 +1330,7 @@ void update_camera_view()
     // shifted left by half the width 
     // and up by half the height
     // and back by focal length
-    vec3f_t viewport_center = vec3f_sub(gc.camera.pos, vec3f_scale(gc.camera.w, focal_length));
+    vec3f_t viewport_center = vec3f_sub(gc.camera.pos, vec3f_scale(gc.camera.w, gc.camera.focus_dist));
     vec3f_t vp_upper_left = vec3f_sub(viewport_center, 
                                       vec3f_add(vec3f_scale(vp_u, 0.5f), 
                                                vec3f_scale(vp_v, 0.5f)));
@@ -1325,9 +1340,14 @@ void update_camera_view()
     gc.pixel00_loc = vec3f_add(vp_upper_left, 
                       vec3f_add(vec3f_scale(gc.pixel_delta_u, 0.5f), 
                                vec3f_scale(gc.pixel_delta_v, 0.5f)));
+    
+    f32 defocus_radius = gc.camera.focus_dist * tan_f32(radians_from_degrees_f32(gc.camera.defocus_angle / 2));
+    gc.camera.defocus_disk_u = vec3f_scale(gc.camera.u, defocus_radius);
+    gc.camera.defocus_disk_v = vec3f_scale(gc.camera.v, defocus_radius);
+
 }
 
-fn void init_camera(int window_width, float aspect_ratio)
+fn void init_camera(int window_width, f32 aspect_ratio)
 {
     u32 window_height = (u32)(window_width / aspect_ratio);
 
@@ -1336,15 +1356,19 @@ fn void init_camera(int window_width, float aspect_ratio)
     gc.screen_width  = window_width;
     gc.screen_height = window_height;
 
-    gc.camera.pos = (vec3f_t){-2.0f, 2.0f, 1.0f};
-    gc.camera.target = (vec3f_t){0.0f, 0.0f, -1.0f};
+    gc.camera.pos = (vec3f_t){13.0f, 2.0f, 3.0f};
+    gc.camera.target = (vec3f_t){0.0f, 0.0f, 0.0f};
     gc.camera.up = (vec3f_t){0.0f, 1.0f, 0.0f};
-    gc.camera.vfov = 60.0f;
+    gc.camera.vfov  = 60.0f;
+    gc.camera.speed = 2.5f;
+
+    gc.camera.defocus_angle = 0.6f;
+    gc.camera.focus_dist = 10.0f;
 
     update_camera_view();
 
-    gc.samples_per_pixel = 100;
-    gc.max_depth = 100;
+    gc.samples_per_pixel = 1;
+    gc.max_depth = 2;
 }
 
 fn void *initGL(u32 width, u32 height)
@@ -1412,101 +1436,122 @@ fn void initFB()
                            GL_TEXTURE_2D, gc.texture, 0);
 }
 
-sphere_t sphere_1;
-sphere_t sphere_2;
-sphere_t sphere_3;
-sphere_t sphere_4;
-sphere_t sphere_5;
-sphere_t sphere_6;
-sphere_t sphere_7;
-sphere_t sphere_8;
+sphere_t ground_sphere;
+sphere_t large_sphere_1;  // glass sphere at center
+sphere_t large_sphere_2;  // brown lambertian sphere
+sphere_t large_sphere_3;  // metal sphere
+sphere_t small_spheres[484]; // 22x22 grid, but some will be skipped
 
 fn void init_scene(void)
 {
     gc.scene_objects = scene_array_create(0);
-
-    sphere_1 = (sphere_t){
+    
+    // Ground sphere (large sphere acting as ground)
+    ground_sphere = (sphere_t){
         .mat = {
             .mat_type = Lambertian,
-            .albedo = {0.157, 0.165, 0.212}
+            .albedo = {0.5f, 0.5f, 0.5f}
         },
-        .center = (vec3f_t){0.0f, -100.5f, -1.0f},
-        .radius = 100.0f
+        .center = (vec3f_t){0.0f, -1000.0f, 0.0f},
+        .radius = 1000.0f
     };
-
-    sphere_2 = (sphere_t){
-        .mat = {
-            .mat_type = Lambertian,
-            .albedo = {0.698, 0.02, 0.02}
-        },
-        .center = (vec3f_t){0.0f, 0.0f, -1.2f},
-        .radius = 0.5f
-    };
-
-    // sphere_3 = (sphere_t){
-    //     .mat = {
-    //         .mat_type = Metal,
-    //         .albedo = {0.8, 0.8, 0.8},
-    //         .fuzz = 0.3f
-    //     },
-    //     .center = (vec3f_t){-1.0f, 0.0f, -1.0f},
-    //     .radius = 0.5f
-    // };
-    sphere_3 = (sphere_t){
+    scene_array_add(gc.scene_objects, (scene_object_t){.type=Sphere, .object=&ground_sphere});
+    
+    // Generate small random spheres
+    int sphere_count = 0;
+    for (int a = -11; a < 11; a++) {
+        for (int b = -11; b < 11; b++) {
+            f32 choose_mat = RAND_FLOAT();
+            vec3f_t center = (vec3f_t){
+                a + 0.9f * RAND_FLOAT(), 
+                0.2f, 
+                b + 0.9f * RAND_FLOAT()
+            };
+            
+            // Check distance from point (4, 0.2, 0)
+            vec3f_t reference_point = (vec3f_t){4.0f, 0.2f, 0.0f};
+            vec3f_t diff = vec3f_sub(center, reference_point);
+            if (vec3f_length(diff) > 0.9f) {
+                if (choose_mat < 0.8f) {
+                    // Diffuse material
+                    vec3f_t albedo = vec3f_mul(vec3f_random(), vec3f_random());
+                    small_spheres[sphere_count] = (sphere_t){
+                        .mat = {
+                            .mat_type = Lambertian,
+                            .albedo = albedo
+                        },
+                        .center = center,
+                        .radius = 0.2f
+                    };
+                } else if (choose_mat < 0.95f) {
+                    // Metal material
+                    vec3f_t albedo = vec3f_random_range(0.5f, 1.0f);
+                    f32 fuzz = RAND_FLOAT_RANGE(0.0f, 0.5f);
+                    small_spheres[sphere_count] = (sphere_t){
+                        .mat = {
+                            .mat_type = Metal,
+                            .albedo = albedo,
+                            .fuzz = fuzz
+                        },
+                        .center = center,
+                        .radius = 0.2f
+                    };
+                } else {
+                    // Glass material
+                    small_spheres[sphere_count] = (sphere_t){
+                        .mat = {
+                            .mat_type = Dielectric,
+                            .refraction_index = 1.5f
+                        },
+                        .center = center,
+                        .radius = 0.2f
+                    };
+                }
+                
+                scene_array_add(gc.scene_objects, (scene_object_t){
+                    .type = Sphere, 
+                    .object = &small_spheres[sphere_count]
+                });
+                sphere_count++;
+            }
+        }
+    }
+    
+    // Three large featured spheres
+    
+    // Large glass sphere at center
+    large_sphere_1 = (sphere_t){
         .mat = {
             .mat_type = Dielectric,
             .refraction_index = 1.5f
         },
-        .center = (vec3f_t){-1.0f, 0.0f, -1.0f},
-        .radius = 0.5f
+        .center = (vec3f_t){0.0f, 1.0f, 0.0f},
+        .radius = 1.0f
     };
-
-    sphere_4 = (sphere_t){
-        .mat = {
-            .mat_type = Dielectric,
-            .refraction_index = 1.0f/1.5f
-        },
-        .center = (vec3f_t){-1.0f, 0.0f, -1.0f},
-        .radius = 0.4f
-    };
-
-
-    sphere_5 = (sphere_t){
-        .mat = {
-            .mat_type = Metal,
-            .albedo = {0.451, 0.486, 0.965},
-            .fuzz = 1.0
-        },
-        .center = (vec3f_t){1.0f, 0.0f, -1.0f},
-        .radius = 0.5f
-    };
-
-    sphere_6 = (sphere_t){
-        .mat = {
-            .mat_type = Metal,
-            .albedo = {0.314, 0.98, 0.482},
-            .fuzz = 0.05f
-        },
-        .center = (vec3f_t){2.0f, 1.2f, -2.0f},
-        .radius = 0.5f
-    };
-
-    sphere_7 = (sphere_t){
+    scene_array_add(gc.scene_objects, (scene_object_t){.type=Sphere, .object=&large_sphere_1});
+    
+    // Large brown lambertian sphere
+    large_sphere_2 = (sphere_t){
         .mat = {
             .mat_type = Lambertian,
-            .albedo = {0.988f, 0.588f, 0.298f},
+            .albedo = {0.4f, 0.2f, 0.1f}
         },
-        .center = (vec3f_t){-2.0f, 1.0f, -2.0f},
-        .radius = 0.5f
+        .center = (vec3f_t){-4.0f, 1.0f, 0.0f},
+        .radius = 1.0f
     };
-
-    scene_array_add(gc.scene_objects, (scene_object_t) {.type=Sphere,.object=&sphere_1});
-    scene_array_add(gc.scene_objects, (scene_object_t) {.type=Sphere,.object=&sphere_2});
-    scene_array_add(gc.scene_objects, (scene_object_t) {.type=Sphere,.object=&sphere_3});
-    scene_array_add(gc.scene_objects, (scene_object_t) {.type=Sphere,.object=&sphere_4});
-    scene_array_add(gc.scene_objects, (scene_object_t) {.type=Sphere,.object=&sphere_5});
-    scene_array_add(gc.scene_objects, (scene_object_t) {.type=Sphere,.object=&sphere_6});
-    scene_array_add(gc.scene_objects, (scene_object_t) {.type=Sphere,.object=&sphere_7});
+    scene_array_add(gc.scene_objects, (scene_object_t){.type=Sphere, .object=&large_sphere_2});
+    
+    // Large metal sphere
+    large_sphere_3 = (sphere_t){
+        .mat = {
+            .mat_type = Metal,
+            .albedo = {0.7f, 0.6f, 0.5f},
+            .fuzz = 0.0f
+        },
+        .center = (vec3f_t){4.0f, 1.0f, 0.0f},
+        .radius = 1.0f
+    };
+    scene_array_add(gc.scene_objects, (scene_object_t){.type=Sphere, .object=&large_sphere_3});
 }
 
 fn bool init_all(void)
@@ -1538,6 +1583,7 @@ fn bool init_all(void)
     gc.dock        = false;
     gc.profile     = false;
     gc.changed     = true;
+    gc.camera_mode = true;
 
     gc.global_scale = 1;
 

@@ -272,6 +272,7 @@ vec3f_t vec3f_lerp(vec3f_t a, vec3f_t b, float s);
 vec3f_t vec3f_random();
 vec3f_t vec3f_random_range(float min, float max);
 vec3f_t vec3f_random_direction();
+vec3f_t vec3f_random_direction_2d();
 bool vec3f_is_near_zero(vec3f_t vec);
 vec3f_t vec3f_reflect(vec3f_t v, vec3f_t n);
 vec3f_t vec3f_refract(vec3f_t v, vec3f_t n, float e);
