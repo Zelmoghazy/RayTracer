@@ -1,15 +1,25 @@
 #ifndef UTIL_H_
 #define UTIL_H_
 
+#ifdef _WIN32
+    #include <windows.h>
+    #include <winnt.h>
+    #include <uxtheme.h>
+    #include <dwmapi.h>
+#endif
+
 #include <stdio.h>
 #include <assert.h>
 #include <stdbool.h>
-#include <stdint.h>
-#include <math.h>
-#include <string.h>
 #include <stdlib.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+#include <time.h>
 #include <float.h>
-#include <immintrin.h>
+#include <math.h>
+
+#include <immintrin.h> 
 
 #define TAB_SIZE                    4
 
@@ -23,12 +33,6 @@ do{\
     if(DEBUG)\
         fprintf(stderr, "%s:%d:%s(): " fmt, __FILE__, __LINE__, __func__ __VA_OPT__(,) __VA_ARGS__);\
 }while(0)
-
-#define HEX_TO_RGBA(s,hex)      \
-s.r = ((hex >> 16) & 0xFF); \
-s.g = ((hex >> 8) & 0xFF);  \
-s.b = (hex & 0xFF);         \
-s.a = 255                   
 
 #define KB(n)         (((u64)(n)) << 10)
 #define MB(n)         (((u64)(n)) << 20)
@@ -100,7 +104,6 @@ s.a = 255
 #define cos_f64(v)    cos(radians_from_turns_f64(v))
 #define tan_f64(v)    tan(radians_from_turns_f64(v))
 
-#define RGBA_TO_U32(r, g, b, a)  ((unsigned)(r) | ((unsigned)(g) << 8) | ((unsigned)(b) << 16) | ((unsigned)(a) << 24))
 
 #define MAX3(a,b,c)     ((a) > (b) ? ((a) > (c) ? (a) : (c)) : ((b) > (c) ? (b) : (c)))
 #define MIN3(a,b,c)     ((a) < (b) ? ((a) < (c) ? (a) : (c)) : ((b) < (c) ? (b) : (c)))
@@ -167,30 +170,6 @@ global_variable i32 min_i32 = (i32)0x80000000;
 global_variable i16 min_i16 = (i16)0x8000;
 global_variable i8  min_i8  =  (i8)0x80;
 
-
-#define COLOR_RED           (color4_t){255, 0, 0, 255}
-#define COLOR_GREEN         (color4_t){0, 255, 0, 255}
-#define COLOR_BLUE          (color4_t){0, 0, 255, 255}
-#define COLOR_WHITE         (color4_t){255, 255, 255, 255}
-#define COLOR_BLACK         (color4_t){0, 0, 0, 255}
-#define COLOR_YELLOW        (color4_t){255, 255, 0, 255}
-#define COLOR_CYAN          (color4_t){0, 255, 255, 255}
-#define COLOR_MAGENTA       (color4_t){255, 0, 255, 255}
-#define COLOR_ORANGE        (color4_t){255, 165, 0, 255}
-#define COLOR_PURPLE        (color4_t){128, 0, 128, 255}
-#define COLOR_PINK          (color4_t){255, 192, 203, 255}
-#define COLOR_GRAY          (color4_t){128, 128, 128, 255}
-#define COLOR_LIGHT_GRAY    (color4_t){211, 211, 211, 255}
-#define COLOR_DARK_GRAY     (color4_t){169, 169, 169, 255}
-#define COLOR_BROWN         (color4_t){139, 69, 19, 255}
-#define COLOR_NAVY          (color4_t){0, 0, 128, 255}
-#define COLOR_LIME          (color4_t){0, 255, 0, 255}
-#define COLOR_TEAL          (color4_t){0, 128, 128, 255}
-#define COLOR_MAROON        (color4_t){128, 0, 0, 255}
-#define COLOR_OLIVE         (color4_t){128, 128, 0, 255}
-
-#define ABUF_INIT() {NULL, 0}
-
 typedef struct color4_t
 {
     u8 r;
@@ -231,22 +210,15 @@ typedef struct mat4x4_t
 
 typedef struct rect_t
 {
-    u32 x;
-    u32 y;
-    u32 w;
-    u32 h;
+    i32 x;
+    i32 y;
+    i32 w;
+    i32 h;
 }rect_t;
-
-typedef struct abuf {
-  char *b;
-  int len;
-}abuf;
 
 void  log_error(int error_code, const char* file, int line);
 void *check_ptr (void *ptr, const char* file, int line);
 void swap(int* a, int* b);
-void buf_append(abuf *ab, const char *s, int len);
-void buf_free(abuf *ab);
 inline void fast_srand(int seed);
 inline int fast_rand(void);
 
@@ -277,7 +249,6 @@ bool vec3f_is_near_zero(vec3f_t vec);
 vec3f_t vec3f_reflect(vec3f_t v, vec3f_t n);
 vec3f_t vec3f_refract(vec3f_t v, vec3f_t n, float e);
 
-
 mat4x4_t mat4x4_mult(mat4x4_t const *m, mat4x4_t const *n);
 mat4x4_t mat4x4_mult_simd(mat4x4_t const *m, mat4x4_t const *n);
 mat4x4_t mat_perspective(f32 n, f32 f, f32 fovY, f32 aspect_ratio);
@@ -288,6 +259,11 @@ mat4x4_t mat_translate(vec3f_t s);
 mat4x4_t mat_rotate_xy(f32 angle);
 mat4x4_t mat_rotate_yz(f32 angle);
 mat4x4_t mat_rotate_zx(f32 angle);
+
+f32 get_time_difference(void *last_time);
+void get_time(void *time);
+
+
 
 #define LOG_ERROR(error_code)   log_error(error_code, __FILE__, __LINE__)
 #define CHECK_PTR(ptr)          check_ptr(ptr, __FILE__, __LINE__)

@@ -38,20 +38,6 @@ inline int fast_rand(void)
     return (g_seed>>16)&0x7FFF;
 }
 
-void buf_append(abuf *ab, const char *s, int len) 
-{
-    char *new_buf = (char *)realloc(ab->b, ab->len + len);
-    if (!new_buf) return;
-    memcpy(&new_buf[ab->len], s, len);
-    ab->b = new_buf;
-    ab->len += len;
-}
-
-void buf_free(abuf *ab) 
-{
-    free(ab->b);
-}
-
 vec2f_t vec2f(float x, float y)
 {
     vec2f_t vec2 = {
@@ -456,4 +442,37 @@ float sine(int x)
 
 float cosine(int x){
     return sine(90-x);
+}
+
+f32 get_time_difference(void *last_time) 
+{
+    f32 dt = 0.0f;
+
+#ifdef _WIN32
+    LARGE_INTEGER now, frequency;
+    QueryPerformanceFrequency(&frequency);
+    QueryPerformanceCounter(&now);
+    LARGE_INTEGER *last_time_win = (LARGE_INTEGER *)last_time;
+    dt = (f32)(now.QuadPart - last_time_win->QuadPart) / (f32)frequency.QuadPart;
+    *last_time_win = now;
+#else
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    struct timespec *last_time_posix = (struct timespec *)last_time;
+    dt = (now.tv_sec - last_time_posix->tv_sec) +
+         (now.tv_nsec - last_time_posix->tv_nsec) / 1e9f;
+    *last_time_posix = now;
+#endif
+
+    return dt;
+}
+
+void get_time(void *time)
+{
+    #ifdef WIN32
+        QueryPerformanceCounter((LARGE_INTEGER *)time);
+    #else
+        struct timespec last_frame_start;
+        clock_gettime(CLOCK_MONOTONIC, (struct timespec *)time);
+    #endif
 }

@@ -8,7 +8,7 @@ call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build
 
 set CFLAGS=/Zi /EHsc /D_AMD64_ /fp:fast /W4 /MD /nologo /utf-8 /std:clatest /arch:AVX
 set L_FLAGS=/SUBSYSTEM:CONSOLE
-set SRC=..\Main.c ..\src\util.c ..\src\arena.c ..\external\src\glad.c
+set SRC=..\Main.c ..\src\util.c ..\src\arena.c ..\src\base_graphics.c ..\external\src\glad.c
 set INCLUDE_DIRS=/I..\include /I..\external\include\
 set LIBRARY_DIRS=/LIBPATH:..\external\lib\
 set LIBRARIES=opengl32.lib glfw3.lib glew32.lib UxTheme.lib Dwmapi.lib user32.lib gdi32.lib shell32.lib kernel32.lib

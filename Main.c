@@ -3,43 +3,17 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
-
 #include "./external/include/stb_image.h"
 #include "./external/include/stb_image_write.h"
 
-#ifdef _WIN32
-    #include <windows.h>
-    #include <winnt.h>
-    #include <uxtheme.h>
-    #include <dwmapi.h>
-#endif
-
-#include <stdio.h>
-#include <assert.h>
-#include <stdbool.h>
-#include <stdlib.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <string.h>
-#include <time.h>
-#include <math.h>
-
-#include <immintrin.h> 
 
 #define PROF_IMPLEMENTATION
 #include "./include/util.h"
 #include "./include/font.h"
 #include "./include/prof.h"
 #include "./include/arena.h"
+#include "./include/base_graphics.h"
 
-typedef struct image_view_t
-{
-    color4_t    *pixels;
-    u32         width;
-    u32         height;
-}image_view_t;
-
-#define BUF_AT(C,x,y)   (C)->pixels[(x)+(y)*C->width]
 
 typedef struct ray_t
 {
@@ -99,6 +73,13 @@ enum object_type{
     Sphere
 };
 
+typedef struct sphere_t 
+{
+    vec3f_t     center;
+    f32         radius;
+    material_t  mat;
+}sphere_t;
+
 typedef struct scene_object_t
 {
     enum object_type type;
@@ -112,12 +93,74 @@ typedef struct scene_objects_t
     size_t capacity;            
 } scene_objects_t;
 
-typedef struct sphere_t 
+struct context_t
 {
-    vec3f_t    center;
-    f32      radius;
-    material_t mat;
-}sphere_t;
+    GLFWwindow*         window;
+    u32                 screen_width;
+    u32                 screen_height;
+    image_view_t        draw_buffer;
+
+    GLuint              texture;
+    GLuint              read_fbo;
+
+    vec3f_t             pixel00_loc;
+    vec3f_t             pixel_delta_u;
+    vec3f_t             pixel_delta_v;
+
+    Camera              camera;
+
+    int                 samples_per_pixel;
+    int                 max_depth;
+
+    scene_objects_t     *scene_objects;
+
+    u32                 mouseX;
+    u32                 mouseLastX;
+    u32                 mouseY;
+    u32                 mouseLastY;
+    bool                firstMouse;
+    bool                left_button_down;
+    bool                right_button_down;
+
+    u32                 global_scale;
+
+    /* Text */
+    font_t              *font;
+
+    /* FLAGS */
+    bool                running;
+    bool                resize;
+    bool                rescale;
+    bool                render;
+    bool                dock;
+    bool                capture;
+    bool                profile;
+    bool                changed;
+    bool                camera_mode;
+
+    /* TIME */
+    u32                 start_time;
+    f32                 dt;
+    u64                 last_render_time;
+    #ifdef _WIN32
+        LARGE_INTEGER   last_frame_start;
+    #else
+        struct timespec last_frame_start;
+    #endif
+    u64                 render_interval;
+
+    arena_t             *frame_arena;
+}gc;
+
+char frametime[512];
+
+char prof_buf[64][512];
+int prof_buf_count;
+int prof_max_width;
+
+void update_camera_view();
+void render_all(void);
+
 
 scene_objects_t* scene_array_create(size_t initial_capacity)
 {
@@ -201,97 +244,39 @@ int scene_array_remove(scene_objects_t* array, size_t index)
     return 0; // Success
 }
 
-#define FONT_ROWS           6   
-#define FONT_COLS           18
-
-#define ASCII_LOW           32
-#define ASCII_HIGH          126
-
-typedef struct font_t
+void increase_fov() 
 {
-    u32 const       *font_pixels;
-    u32              font_width;
-    u32              font_height;
-    u32              font_char_width;
-    u32              font_char_height;
-    rect_t           glyph_table[ASCII_HIGH - ASCII_LOW + 1];
-}font_t;
+    gc.camera.vfov += 5.0f;
+    if (gc.camera.vfov > 120.0f) {
+        gc.camera.vfov = 120.0f; 
+    }
+    update_camera_view();
+}
 
-typedef struct rendered_text_t
+void decrease_fov() 
 {
-    font_t           *font;
-    char             *string;
-    u32              size;
-    vec2_t           pos;       
-    color4_t         color;     
-    u32              scale;     
-}rendered_text_t;
+    gc.camera.vfov -= 5.0f;
+    if (gc.camera.vfov < 10.0f) {
+        gc.camera.vfov = 10.0f; 
+    }
+    update_camera_view();
+}
 
-struct context_t
+void set_fov(f32 new_fov)
 {
-    GLFWwindow*         window;
-    u32                 screen_width;
-    u32                 screen_height;
-    image_view_t        draw_buffer;
+    gc.camera.vfov = new_fov;
+    if (gc.camera.vfov < 10.0f) gc.camera.vfov = 10.0f;
+    if (gc.camera.vfov > 120.0f) gc.camera.vfov = 120.0f;
+    update_camera_view();
+}
 
-    GLuint              texture;
-    GLuint              read_fbo;
-
-    vec3f_t             pixel00_loc;
-    vec3f_t             pixel_delta_u;
-    vec3f_t             pixel_delta_v;
-
-    Camera              camera;
-
-    int                 samples_per_pixel;
-    int                 max_depth;
-
-    scene_objects_t     *scene_objects;
-
-    u32                 mouseX;
-    u32                 mouseLastX;
-    u32                 mouseY;
-    u32                 mouseLastY;
-    bool                firstMouse;
-
-    u32                 global_scale;
-
-    /* Text */
-    font_t              *font;
-
-    /* FLAGS */
-    bool                running;
-    bool                resize;
-    bool                rescale;
-    bool                render;
-    bool                dock;
-    bool                capture;
-    bool                profile;
-    bool                changed;
-    bool                camera_mode;
-
-    /* TIME */
-    u32                 start_time;
-    f32                 dt;
-    u64                 last_render_time;
-    #ifdef _WIN32
-        LARGE_INTEGER   last_frame_start;
-    #else
-        struct timespec last_frame_start;
-    #endif
-    u64                 render_interval;
-
-    arena_t             *frame_arena;
-}gc;
-
-char frametime[512];
-
-char prof_buf[64][512];
-int prof_buf_count;
-int prof_max_width;
-int prof_max_height;
-
-void update_camera_view();
+void adjust_fov(f32 delta)
+{
+    gc.camera.vfov += delta;
+    if (gc.camera.vfov < 10.0f) gc.camera.vfov = 10.0f;
+    if (gc.camera.vfov > 120.0f) gc.camera.vfov = 120.0f;
+    update_camera_view();
+}
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height)
 {
@@ -337,6 +322,10 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 
     f32 xoffset, yoffset;
     getMouseDelta(&xoffset, &yoffset);
+
+    if(gc.right_button_down)
+    {
+    }
 }
 
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) 
@@ -344,36 +333,25 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
     (void)window;
     (void)xoffset;
     (void)yoffset;
+
+    f32 scroll_sensitivity = 20.0f;
+    f32 scaled_x = (f32)xoffset * scroll_sensitivity;
+    f32 scaled_y = (f32)yoffset * scroll_sensitivity;
 }
 
-void increase_fov() {
-    gc.camera.vfov += 5.0f;
-    if (gc.camera.vfov > 120.0f) {
-        gc.camera.vfov = 120.0f; 
+void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
+{
+    (void)window;
+    (void)mods;
+    
+    if (button == GLFW_MOUSE_BUTTON_LEFT)
+    {
+        gc.left_button_down = (action == GLFW_PRESS);
     }
-    update_camera_view();
-}
-
-void decrease_fov() {
-    gc.camera.vfov -= 5.0f;
-    if (gc.camera.vfov < 10.0f) {
-        gc.camera.vfov = 10.0f; 
+    else if (button == GLFW_MOUSE_BUTTON_RIGHT)
+    {
+        gc.right_button_down = (action == GLFW_PRESS);
     }
-    update_camera_view();
-}
-
-void set_fov(f32 new_fov) {
-    gc.camera.vfov = new_fov;
-    if (gc.camera.vfov < 10.0f) gc.camera.vfov = 10.0f;
-    if (gc.camera.vfov > 120.0f) gc.camera.vfov = 120.0f;
-    update_camera_view();
-}
-
-void adjust_fov(f32 delta) {
-    gc.camera.vfov += delta;
-    if (gc.camera.vfov < 10.0f) gc.camera.vfov = 10.0f;
-    if (gc.camera.vfov > 120.0f) gc.camera.vfov = 120.0f;
-    update_camera_view();
 }
 
 void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) 
@@ -437,6 +415,23 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
                     update_camera_view();
                 }
                 break;
+            case GLFW_KEY_I:
+                if(gc.camera_mode)
+                {
+                    gc.camera.focus_dist++;
+                    update_camera_view();
+                }
+                break;
+            case GLFW_KEY_K:
+                if(gc.camera_mode)
+                {
+                    gc.camera.focus_dist--;
+                    if(gc.camera.focus_dist < 0.0f){
+                        gc.camera.focus_dist = 0.0f;
+                    }
+                    update_camera_view();
+                }
+                break;
             case GLFW_KEY_UP:
                 if(gc.camera_mode)
                 {
@@ -478,7 +473,7 @@ void charCallback(GLFWwindow* window, unsigned int codepoint)
     }
 }
 
-fn void set_dark_mode(GLFWwindow *window)
+void set_dark_mode(GLFWwindow *window)
 {
     #if 0
     #ifdef _WIN32
@@ -492,362 +487,6 @@ fn void set_dark_mode(GLFWwindow *window)
     #endif
 }
 
-/*
-    convert normalized color to 0->255 range
-*/
-fn inline color4_t to_color4(vec3f_t const c)
-{
-    color4_t res;
-    res.r = (u8)MAX(0.0f, MIN(255.0f, c.x * 255.0f));
-    res.g = (u8)MAX(0.0f, MIN(255.0f, c.y * 255.0f));
-    res.b = (u8)MAX(0.0f, MIN(255.0f, c.z * 255.0f));
-    res.a = (u8)255;
-
-    return res;
-}
-
-fn void render_all(void);
-
-fn void put_pixel(image_view_t const *color_buf, u32 x, u32 y, color4_t color)
-{
-    BUF_AT(color_buf, x, y) = color;
-}
-
-fn void draw_line(image_view_t const *color_buf, i32 x0, i32 y0, i32 x1, i32 y1, vec3f_t const color)
-{
-    bool steep = false;
-    
-    // If the line is steep, we transpose the image
-    if (abs(x0 - x1) < abs(y0 - y1)) {
-        swap(&x0, &y0);
-        swap(&x1, &y1);
-        steep = true;
-    }
-    
-    // Make it left-to-right
-    if (x0 > x1) {
-        swap(&x0, &x1);
-        swap(&y0, &y1);
-    }
-    
-    int dx = x1 - x0;
-    int dy = y1 - y0;
-    int derror2 = abs(dy) * 2;
-    int error2 = 0;
-    int y = y0;
-    
-    for (int x = x0; x <= x1; x++) 
-    {
-        if (steep) 
-        {
-            BUF_AT(color_buf, y, x) = to_color4(color);
-        } 
-        else 
-        {
-            BUF_AT(color_buf, x, y) = to_color4(color);
-        }
-        
-        error2 += derror2;
-        if (error2 > dx) {
-            y += (y1 > y0 ? 1 : -1);
-            error2 -= dx * 2;
-        }
-    }
-}
-
-fn void draw_hline(image_view_t const *color_buf, i32 y, i32 x0, i32 x1, vec3f_t const color)
-{
-    // Ensure x0 <= x1
-    if (x0 > x1) {
-        swap(&x0, &x1);
-    }
-    
-    color4_t pixel_color = to_color4(color);
-    
-    for (int x = x0; x <= x1; x++) {
-        BUF_AT(color_buf, x, y) = pixel_color;
-    }
-}
-
-fn void draw_vline(image_view_t const *color_buf, i32 x, i32 y0, i32 y1, vec3f_t const color)
-{
-    // Ensure y0 <= y1
-    if (y0 > y1) {
-        swap(&y0, &y1);
-    }
-    
-    color4_t pixel_color = to_color4(color);
-    
-    for (int y = y0; y <= y1; y++) {
-        BUF_AT(color_buf, x, y) = pixel_color;
-    }
-}
-
-void draw_rect_outline_wh(image_view_t const *color_buf, int x0, int y0, int w , int h , vec3f_t const color)
-{
-   if (h == 1) 
-   {
-        draw_hline(color_buf, y0, x0, x0+w-1, color);
-   }
-   else if (w == 1)
-   {
-        draw_vline(color_buf, x0, y0, y0+h-1, color);
-   }
-   else if (h > 1 && w > 1) 
-   {
-      int x1 = x0+w-1, y1 = y0+h-1;
-      draw_hline(color_buf, y0,x0,x1-1, color);
-      draw_vline(color_buf, x1,y0,y1-1, color);
-      draw_hline(color_buf, y1,x0+1,x1, color);
-      draw_vline(color_buf, x0,y0+1,y1, color);
-   }
-}
-
-void draw_rect_outline(image_view_t const *color_buf, int x0, int y0, int x1, int y1, vec3f_t const color)
-{
-    if (x1 < x0) 
-    { 
-        swap(&x1, &x0);
-    }
-    if (y1 < y0) 
-    { 
-        swap(&y1, &y0);
-    }
-    draw_rect_outline_wh(color_buf, x0,y0, x1-x0+1, y1-y0+1, color);
-}
-
-void draw_rect_solid_wh(image_view_t const *color_buf, int x0, int y0, int w , int h , vec3f_t const color)
-{
-    if (w > 0) 
-    {   
-        int j, x1 = x0 + w -1;
-        for (j=0; j < h; ++j)
-        {
-            draw_hline(color_buf, y0+j, x0, x1, color);
-        }
-    }
-}
-  
-void draw_rect_solid(image_view_t const *color_buf, int x0, int y0, int x1, int y1, vec3f_t const color)
-{
-    if (x1 < x0) 
-    { 
-        swap(&x1, &x0);
-    }
-    if (y1 < y0) 
-    { 
-        swap(&y1, &y0);
-    }
-    draw_rect_solid_wh(color_buf, x0,y0, x1-x0+1, y1-y0+1, color);
-}
-
-fn void clear_screen(image_view_t const *color_buf, color4_t const color)
-{
-    for (u32 y = 0; y < color_buf->height; ++y)
-    {
-        for(u32 x = 0; x < color_buf->width; ++x)
-        {    
-            put_pixel(color_buf,x,y,color);    
-        }
-    }
-}
-
-#define TGA_HEADER(buf,w,h,b) \
-    header[2]  = 2;\
-    header[12] = (w) & 0xFF;\
-    header[13] = ((w) >> 8) & 0xFF;\
-    header[14] = (h) & 0xFF;\
-    header[15] = ((h) >> 8) & 0xFF;\
-    header[16] = (b);\
-    header[17] |= 0x20 
-
-fn void export_image(image_view_t const *color_buf, const char *filename) 
-{
-    FILE *file = fopen(filename, "wb");
-
-    if (!file) {
-        perror("Failed to open file");
-        return;
-    }
-
-    uint8_t header[18] = {0};
-    TGA_HEADER(header, color_buf->width, color_buf->height, 32);
-
-    fwrite(header, sizeof(uint8_t), 18, file);
-
-    for (size_t y = 0; y < color_buf->height; ++y) {
-        for (size_t x = 0; x < color_buf->width; ++x) {
-            color4_t pixel = BUF_AT(color_buf, x, y);
-            uint8_t bgra[4] = { pixel.b, pixel.g, pixel.r, pixel.a };
-            fwrite(bgra, sizeof(uint8_t), 4, file);
-        }
-    }
-    
-    fclose(file);
-}
-
-fn f32 get_time_difference(void *last_time) 
-{
-    f32 dt = 0.0f;
-
-#ifdef _WIN32
-    LARGE_INTEGER now, frequency;
-    QueryPerformanceFrequency(&frequency);
-    QueryPerformanceCounter(&now);
-    LARGE_INTEGER *last_time_win = (LARGE_INTEGER *)last_time;
-    dt = (f32)(now.QuadPart - last_time_win->QuadPart) / (f32)frequency.QuadPart;
-    *last_time_win = now;
-#else
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    struct timespec *last_time_posix = (struct timespec *)last_time;
-    dt = (now.tv_sec - last_time_posix->tv_sec) +
-         (now.tv_nsec - last_time_posix->tv_nsec) / 1e9f;
-    *last_time_posix = now;
-#endif
-
-    return dt;
-}
-
-fn void get_time(void *time)
-{
-    #ifdef WIN32
-        QueryPerformanceCounter((LARGE_INTEGER *)time);
-    #else
-        struct timespec last_frame_start;
-        clock_gettime(CLOCK_MONOTONIC, (struct timespec *)time);
-    #endif
-}
-
-fn font_t* init_font(void)
-{
-    font_t *font = malloc(sizeof(*font));
-    assert(font);
-
-    font->font_pixels = (u32*)font_pixels;
-    font->font_width  = 128;
-    font->font_height = 55;
-
-    font->font_char_height =  (u32)(font->font_height/FONT_ROWS); 
-    font->font_char_width  =  (u32)(font->font_width/FONT_COLS); 
-
-    for(u32 i = ASCII_LOW; i <= ASCII_HIGH; i++)
-    {
-        const u32 index  = i - ASCII_LOW;        // ascii to index
-        const u32 col    = index % FONT_COLS;
-        const u32 row    = index / FONT_COLS;
-
-        font->glyph_table[index] = (rect_t){
-            .x = (col * font->font_char_width),
-            .y = (row * font->font_char_height),
-            .w = (font->font_char_width),
-            .h = (font->font_char_height),
-        };
-    }
-
-    return font;
-}
-
-fn void render_glyph_to_buffer(rendered_text_t *text, u32 glyph_idx,
-                               image_view_t const *color_buf,
-                               u32 dst_x, u32 dst_y)
-{
-    const rect_t *src_rect = &(text->font->glyph_table[glyph_idx]);
-    u32 src_width = text->font->font_width;
-    u32 dst_w = text->font->font_char_width * text->scale;
-    u32 dst_h = text->font->font_char_height * text->scale;
-
-    if (dst_x >= color_buf->width || 
-        dst_y >= color_buf->height)
-    {
-        return;
-    }
-
-    if ((int)dst_x + (int)dst_w <= 0 ||
-        (int)dst_y + (int)dst_h <= 0)
-    {
-        return;
-    }
-
-    u32 x_start = ((int)dst_x < 0) ? 0 : dst_x;
-    u32 y_start = ((int)dst_y < 0) ? 0 : dst_y;
-    u32 x_end = (dst_x + dst_w > color_buf->width) ? color_buf->width : dst_x + dst_w;
-    u32 y_end = (dst_y + dst_h > color_buf->height) ? color_buf->height : dst_y + dst_h;
-    
-    f32 x_scale = (f32)src_rect->w / dst_w;
-    f32 y_scale = (f32)src_rect->h / dst_h;
-    
-    for (u32 y = y_start; y < y_end; y++) 
-    {
-        for (u32 x = x_start; x < x_end; x++) 
-        {
-            u32 rel_x = x - dst_x;
-            u32 rel_y = y - dst_y;
-            
-            u32 src_x = (u32)src_rect->x + (u32)((f32)rel_x * x_scale);
-            u32 src_y = (u32)src_rect->y + (u32)((f32)rel_y * y_scale);
-            
-            if (src_x >= 0 && src_x < src_width && 
-                src_y >= 0 && src_y < (src_rect->y + src_rect->h)) 
-            {
-                
-                uint32_t src_pixel_raw = text->font->font_pixels[src_y * src_width + src_x];
-
-                color4_t src_pixel;
-                HEX_TO_RGBA(src_pixel,src_pixel_raw);
-                
-                if (src_pixel.r != 0 || src_pixel.g != 0 || src_pixel.b != 0) {
-                    BUF_AT(color_buf,x,y) = src_pixel;
-                }
-            }
-        }
-    }
-}
-
-void render_n_string_abs(image_view_t const *color_buf, rendered_text_t *text)
-{
-    char* string = text->string;
-    u32 x = (u32)text->pos.x;
-    u32 y = (u32)text->pos.y;
-    
-    while (*string) 
-    {
-        const u32 index = (u32)(*string - ASCII_LOW); 
-        
-        u32 scaled_width  = text->font->font_char_width * text->scale;
-        u32 scaled_height = text->font->font_char_height * text->scale;
-
-        if (*string < ASCII_LOW || *string > ASCII_HIGH) 
-        {
-            if(*string == '\n')
-            {
-                y += scaled_height;
-                x = 0;
-            }
-            else if (*string == '\t')
-            {
-                x+=scaled_width * TAB_SIZE;
-            }
-            else
-            {
-                fprintf(stderr, "Unknown character!\n");
-            }
-            continue;
-        }
-
-        
-        // Render the character to framebuffer
-        render_glyph_to_buffer(text, index, color_buf, x, y); 
-        
-        x += scaled_width;
-        if(x > gc.screen_width) 
-        {
-            y += scaled_height;
-            x=0;
-        }
-        string++;
-    }
-}
 
 void blitToScreen(void *pixels, u32 width, u32 height)
 {
@@ -867,7 +506,7 @@ void blitToScreen(void *pixels, u32 width, u32 height)
                       GL_NEAREST);      
 }
 
-fn void prof_record_results(void)
+void prof_record_results(void)
 {
     for (int i = 0; i < g_prof_storage.count; i++) 
     {
@@ -882,20 +521,19 @@ fn void prof_record_results(void)
             if(text_length > prof_max_width){
                 prof_max_width = text_length;
             }
-            prof_max_height++;
-
+            
             prof_buf_count++;
         }
     }
 }
 
-fn void render_prof_entries(void)
+void render_prof_entries(void)
 {
-    draw_rect_solid_wh(&gc.draw_buffer, 0,0, prof_max_width*gc.font->font_char_width,
-                       prof_max_height*gc.font->font_char_height+10,(vec3f_t){0.157, 0.165, 0.212});
-
+    draw_rect_solid_wh(&gc.draw_buffer, 0,0, 
+                       prof_max_width*gc.font->font_char_width,
+                       prof_buf_count*gc.font->font_char_height+10,
+                       (color4_t){40, 42, 54,255});
     prof_max_width = 0;
-    prof_max_height = 0;
 
     for(int i = 0; i < prof_buf_count; i++)
     {
@@ -909,7 +547,6 @@ fn void render_prof_entries(void)
         render_n_string_abs(&gc.draw_buffer, &text);
     }
 }
-
 
 /* 
     We can determine if the ray is inside or outside the sphere.
@@ -1103,7 +740,6 @@ vec3f_t random_on_hemisphere(vec3f_t *normal)
     }
 }
 
-
 vec3f_t ray_color(ray_t ray, int depth)
 {
     vec3f_t color = {1.0f, 1.0f, 1.0f};
@@ -1190,21 +826,12 @@ void present_frame(image_view_t* view)
     glfwSwapBuffers(gc.window);
 }
 
-vec3f_t linear_to_gamma(vec3f_t color)
-{
-    vec3f_t res = {0.0f,0.0f,0.0f};
-    if(color.x > 0) res.x = sqrt_f32(color.x);
-    if(color.y > 0) res.y = sqrt_f32(color.y);
-    if(color.z > 0) res.z = sqrt_f32(color.z);
-    return res;
-}
-
-fn void poll_events(void)
+void poll_events(void)
 {
     glfwPollEvents();
 }
 
-fn void render_all(void)
+void render_all(void)
 {
     gc.draw_buffer.height = gc.screen_height;
     gc.draw_buffer.width  = gc.screen_width;
@@ -1216,9 +843,10 @@ fn void render_all(void)
     {
         gc.draw_buffer.pixels = ARENA_ALLOC(gc.frame_arena, height * width * sizeof(color4_t));
     }
-
-    // clear_screen(&gc.draw_buffer, COLOR_DARK_GRAY);
     
+    clear_screen(&gc.draw_buffer, HEX_TO_COLOR4(0x282a36));
+    
+    #if 0    
     PROFILE("Rendering : Ray Tracing")
     {
         vec3f_t color;
@@ -1227,7 +855,7 @@ fn void render_all(void)
         {
             poll_events();
             for(u32 x = 0; x < width; ++x)
-            { 
+            {
                 color = (vec3f_t){0, 0, 0};
                 PROFILE("Ray Tracing: Getting Color")
                 {
@@ -1241,12 +869,30 @@ fn void render_all(void)
                 }
                 PROFILE("Just putting a pixel")
                 {
-                    put_pixel(&gc.draw_buffer, x, y, to_color4(color));
+                    set_pixel(&gc.draw_buffer, x, y, to_color4(color));
                 }
             }
             if(y%8)present_frame(&gc.draw_buffer);
         }
     }
+    #endif
+    
+    #if 1
+    PROFILE("Rendering : Circle fill")
+    {
+        color4_t red = {255, 0, 0, 255};
+        color4_t green = {0, 255, 0, 255};
+        color4_t blue = {0, 0, 255, 255};
+        color4_t yellow = {255, 255, 0, 255};
+        // Left scrollable panel
+        push_scissor(50, 50, 200, 300);
+            draw_rect_scissored(&gc.draw_buffer,60, 60, 180, 500, red);   
+            draw_rect_scissored(&gc.draw_buffer,80, 200, 60, 40, green);
+            draw_rect_scissored(&gc.draw_buffer, gc.mouseX, gc.mouseY, 50, 30, blue);
+        pop_scissor();
+        
+    }
+    #endif
 
     PROFILE("Rendering : Text")
     {
@@ -1347,7 +993,7 @@ void update_camera_view()
 
 }
 
-fn void init_camera(int window_width, f32 aspect_ratio)
+void init_camera(int window_width, f32 aspect_ratio)
 {
     u32 window_height = (u32)(window_width / aspect_ratio);
 
@@ -1371,7 +1017,7 @@ fn void init_camera(int window_width, f32 aspect_ratio)
     gc.max_depth = 2;
 }
 
-fn void *initGL(u32 width, u32 height)
+void *initGL(u32 width, u32 height)
 {
     if (!glfwInit()) {
         fprintf(stderr, "Failed to initialize GLFW\n");
@@ -1399,6 +1045,7 @@ fn void *initGL(u32 width, u32 height)
     glfwSetWindowRefreshCallback(window, window_refresh_callback);
     glfwSetCursorPosCallback(window, mouse_callback);
     glfwSetScrollCallback(window, scroll_callback);
+    glfwSetMouseButtonCallback(window, mouse_button_callback);
 
     glewExperimental = GL_TRUE;
     GLenum err = glewInit();
@@ -1417,7 +1064,7 @@ fn void *initGL(u32 width, u32 height)
     return window;
 }
 
-fn void initFB()
+void initFB()
 {
     glGenTextures(1, &gc.texture);
     glBindTexture(GL_TEXTURE_2D, gc.texture);
@@ -1442,7 +1089,7 @@ sphere_t large_sphere_2;  // brown lambertian sphere
 sphere_t large_sphere_3;  // metal sphere
 sphere_t small_spheres[484]; // 22x22 grid, but some will be skipped
 
-fn void init_scene(void)
+void init_scene(void)
 {
     gc.scene_objects = scene_array_create(0);
     
@@ -1457,6 +1104,7 @@ fn void init_scene(void)
     };
     scene_array_add(gc.scene_objects, (scene_object_t){.type=Sphere, .object=&ground_sphere});
     
+    #if 0
     // Generate small random spheres
     int sphere_count = 0;
     for (int a = -11; a < 11; a++) {
@@ -1516,7 +1164,7 @@ fn void init_scene(void)
             }
         }
     }
-    
+    #endif
     // Three large featured spheres
     
     // Large glass sphere at center
@@ -1554,7 +1202,7 @@ fn void init_scene(void)
     scene_array_add(gc.scene_objects, (scene_object_t){.type=Sphere, .object=&large_sphere_3});
 }
 
-fn bool init_all(void)
+bool init_all(void)
 {
     f32 aspect_ratio = 16.0f / 9.0f;
 
@@ -1572,7 +1220,7 @@ fn bool init_all(void)
 
     initFB();
 
-    gc.font = init_font();
+    gc.font = init_font((u32*)font_pixels);
     
     prof_init();
 
@@ -1618,10 +1266,9 @@ int main(void)
         {
             arena_reset(gc.frame_arena);
         }
-        
+
         prof_sort_results();
         prof_record_results();
-        prof_print_results();
         prof_reset();
     }
     return 0;
