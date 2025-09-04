@@ -6,14 +6,12 @@
 #include "./external/include/stb_image.h"
 #include "./external/include/stb_image_write.h"
 
-
 #define PROF_IMPLEMENTATION
 #include "./include/util.h"
 #include "./include/font.h"
 #include "./include/prof.h"
 #include "./include/arena.h"
 #include "./include/base_graphics.h"
-
 
 typedef struct ray_t
 {
@@ -23,7 +21,7 @@ typedef struct ray_t
 
 #define RAY_AT(r,t) vec3f_add(r->orig, vec3f_scale(r->dir, t)) 
 
-typedef struct Camera
+typedef struct camera_t
 {
     vec3f_t pos;
     vec3f_t target;
@@ -42,14 +40,14 @@ typedef struct Camera
     vec3f_t defocus_disk_u;
     vec3f_t defocus_disk_v;
 
-}Camera;
+}camera_t;
 
 enum material_type
 {
-    Lambertian,   // Diffuse surface (matte)
-    Metal,        // Reflective  (specular reflection, with fuzziness)
-    Dielectric,   // Transparent (glass, water, etc., with refraction)
-    Emissive,     // Light-emitting surface
+    Lambertian,
+    Metal,     
+    Dielectric,
+    Emissive,  
 };
 
 typedef struct material_t
@@ -95,7 +93,7 @@ typedef struct scene_objects_t
 
 struct context_t
 {
-    GLFWwindow*         window;
+    void               *window;
     u32                 screen_width;
     u32                 screen_height;
     image_view_t        draw_buffer;
@@ -107,10 +105,10 @@ struct context_t
     vec3f_t             pixel_delta_u;
     vec3f_t             pixel_delta_v;
 
-    Camera              camera;
+    camera_t            camera;
 
-    int                 samples_per_pixel;
-    int                 max_depth;
+    i32                 samples_per_pixel;
+    i32                 max_depth;
 
     scene_objects_t     *scene_objects;
 
@@ -142,12 +140,12 @@ struct context_t
     u32                 start_time;
     f32                 dt;
     u64                 last_render_time;
+    u64                 render_interval;
     #ifdef _WIN32
         LARGE_INTEGER   last_frame_start;
     #else
         struct timespec last_frame_start;
     #endif
-    u64                 render_interval;
 
     arena_t             *frame_arena;
 }gc;
@@ -155,12 +153,25 @@ struct context_t
 char frametime[512];
 
 char prof_buf[64][512];
-int prof_buf_count;
-int prof_max_width;
+i32 prof_buf_count;
+i32 prof_max_width;
+
+struct  {
+    f32 x;
+    f32 y;
+    f32 w;
+    f32 h;
+} test_animation = {0,0,200,200};
+i32 new_x = 0;
+i32 new_y = 0;
+bool test_animation_move = false;
 
 void update_camera_view();
 void render_all(void);
-
+void increase_fov();
+void decrease_fov();
+void set_fov(f32 new_fov);
+void adjust_fov(f32 delta);
 
 scene_objects_t* scene_array_create(size_t initial_capacity)
 {
@@ -187,7 +198,7 @@ scene_objects_t* scene_array_create(size_t initial_capacity)
     return array;
 }
 
-int scene_array_resize(scene_objects_t* array, size_t new_capacity)
+i32 scene_array_resize(scene_objects_t* array, size_t new_capacity)
 {
     if (!array || new_capacity < array->count) {
         return -1; 
@@ -204,7 +215,7 @@ int scene_array_resize(scene_objects_t* array, size_t new_capacity)
     return 0; // Success
 }
 
-int scene_array_add(scene_objects_t* array, scene_object_t object)
+i32 scene_array_add(scene_objects_t* array, scene_object_t object)
 {
     if (!array) {
         return -1;
@@ -224,7 +235,7 @@ int scene_array_add(scene_objects_t* array, scene_object_t object)
     return 0; 
 }
 
-int scene_array_remove(scene_objects_t* array, size_t index)
+i32 scene_array_remove(scene_objects_t* array, size_t index)
 {
     if (!array || index >= array->count) {
         return -1; // Invalid parameters
@@ -242,40 +253,6 @@ int scene_array_remove(scene_objects_t* array, size_t index)
     }
     
     return 0; // Success
-}
-
-void increase_fov() 
-{
-    gc.camera.vfov += 5.0f;
-    if (gc.camera.vfov > 120.0f) {
-        gc.camera.vfov = 120.0f; 
-    }
-    update_camera_view();
-}
-
-void decrease_fov() 
-{
-    gc.camera.vfov -= 5.0f;
-    if (gc.camera.vfov < 10.0f) {
-        gc.camera.vfov = 10.0f; 
-    }
-    update_camera_view();
-}
-
-void set_fov(f32 new_fov)
-{
-    gc.camera.vfov = new_fov;
-    if (gc.camera.vfov < 10.0f) gc.camera.vfov = 10.0f;
-    if (gc.camera.vfov > 120.0f) gc.camera.vfov = 120.0f;
-    update_camera_view();
-}
-
-void adjust_fov(f32 delta)
-{
-    gc.camera.vfov += delta;
-    if (gc.camera.vfov < 10.0f) gc.camera.vfov = 10.0f;
-    if (gc.camera.vfov > 120.0f) gc.camera.vfov = 120.0f;
-    update_camera_view();
 }
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height)
@@ -347,6 +324,12 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
     if (button == GLFW_MOUSE_BUTTON_LEFT)
     {
         gc.left_button_down = (action == GLFW_PRESS);
+        if(gc.left_button_down)
+        {
+            test_animation_move = true;
+            new_x = gc.mouseX;
+            new_y = gc.mouseY;
+        }
     }
     else if (button == GLFW_MOUSE_BUTTON_RIGHT)
     {
@@ -487,25 +470,6 @@ void set_dark_mode(GLFWwindow *window)
     #endif
 }
 
-
-void blitToScreen(void *pixels, u32 width, u32 height)
-{
-    glBindTexture(GL_TEXTURE_2D, gc.texture);
-
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 
-                    (int)width, (int)height,
-                    GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-    
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, gc.read_fbo);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0); // make the default framebuffer active again ?
-    
-    // transfer pixel values from one region of a read framebuffer to another region of a draw framebuffer.
-    glBlitFramebuffer(0, 0, width, height,  // src
-                      0, height, width, 0,  // dst (flipped)    
-                      GL_COLOR_BUFFER_BIT,    
-                      GL_NEAREST);      
-}
-
 void prof_record_results(void)
 {
     for (int i = 0; i < g_prof_storage.count; i++) 
@@ -569,7 +533,6 @@ void set_face_normal(hit_record_t *record, ray_t *ray, vec3f_t *outward_normal)
         record->norm = vec3f_scale(*outward_normal, -1.0f);
     }
 }
-
 
 f32 reflectance(f32 cosine, f32 refraction_index)
 {
@@ -820,110 +783,38 @@ ray_t get_ray(int x, int y)
     return ray;
 }
 
-void present_frame(image_view_t* view) 
+void increase_fov() 
 {
-    blitToScreen(view->pixels, view->width, view->height);
-    glfwSwapBuffers(gc.window);
+    gc.camera.vfov += 5.0f;
+    if (gc.camera.vfov > 120.0f) {
+        gc.camera.vfov = 120.0f; 
+    }
+    update_camera_view();
 }
 
-void poll_events(void)
+void decrease_fov() 
 {
-    glfwPollEvents();
+    gc.camera.vfov -= 5.0f;
+    if (gc.camera.vfov < 10.0f) {
+        gc.camera.vfov = 10.0f; 
+    }
+    update_camera_view();
 }
 
-void render_all(void)
+void set_fov(f32 new_fov)
 {
-    gc.draw_buffer.height = gc.screen_height;
-    gc.draw_buffer.width  = gc.screen_width;
+    gc.camera.vfov = new_fov;
+    if (gc.camera.vfov < 10.0f) gc.camera.vfov = 10.0f;
+    if (gc.camera.vfov > 120.0f) gc.camera.vfov = 120.0f;
+    update_camera_view();
+}
 
-    u32 height       = gc.draw_buffer.height;
-    u32 width        = gc.draw_buffer.width;
-
-    PROFILE("Rendering : Allocating Frame Memory")
-    {
-        gc.draw_buffer.pixels = ARENA_ALLOC(gc.frame_arena, height * width * sizeof(color4_t));
-    }
-    
-    clear_screen(&gc.draw_buffer, HEX_TO_COLOR4(0x282a36));
-    
-    #if 0    
-    PROFILE("Rendering : Ray Tracing")
-    {
-        vec3f_t color;
-
-        for (u32 y = 0; y < height; ++y)
-        {
-            poll_events();
-            for(u32 x = 0; x < width; ++x)
-            {
-                color = (vec3f_t){0, 0, 0};
-                PROFILE("Ray Tracing: Getting Color")
-                {
-                    for(int sample = 0; sample < gc.samples_per_pixel; sample++)
-                    {
-                        ray_t ray = get_ray(x, y);
-                        color = vec3f_add(color, ray_color(ray, gc.max_depth));
-                    }
-                    color = vec3f_scale(color, (f32)1.0f/(f32)gc.samples_per_pixel);
-                    color = linear_to_gamma(color);
-                }
-                PROFILE("Just putting a pixel")
-                {
-                    set_pixel(&gc.draw_buffer, x, y, to_color4(color));
-                }
-            }
-            if(y%8)present_frame(&gc.draw_buffer);
-        }
-    }
-    #endif
-    
-    #if 1
-    PROFILE("Rendering : Circle fill")
-    {
-        color4_t red = {255, 0, 0, 255};
-        color4_t green = {0, 255, 0, 255};
-        color4_t blue = {0, 0, 255, 255};
-        color4_t yellow = {255, 255, 0, 255};
-        // Left scrollable panel
-        push_scissor(50, 50, 200, 300);
-            draw_rect_scissored(&gc.draw_buffer,60, 60, 180, 500, red);   
-            draw_rect_scissored(&gc.draw_buffer,80, 200, 60, 40, green);
-            draw_rect_scissored(&gc.draw_buffer, gc.mouseX, gc.mouseY, 50, 30, blue);
-        pop_scissor();
-        
-    }
-    #endif
-
-    PROFILE("Rendering : Text")
-    {
-        #if 1
-            u32 scale = 2;
-            u32 pos = gc.screen_width-9*gc.font->font_char_width*scale;
-
-            rendered_text_t text = {
-                .font = gc.font,
-                .pos = {.x= pos,.y=0},
-                .color = {.r = 255, .g = 255, .b = 255, .a=255},
-                .scale = scale,
-                .string = frametime
-            };
-            
-            sprintf(frametime,"%.2f ms", gc.dt*1000);
-            render_n_string_abs(&gc.draw_buffer, &text);
-        #endif
-
-        if(gc.profile)
-        {
-            render_prof_entries();
-        }
-    }
-    prof_buf_count = 0;
-    
-    if(gc.capture)
-    {
-        export_image(&gc.draw_buffer, "capture.tga");
-        gc.capture = false;
-    }
+void adjust_fov(f32 delta)
+{
+    gc.camera.vfov += delta;
+    if (gc.camera.vfov < 10.0f) gc.camera.vfov = 10.0f;
+    if (gc.camera.vfov > 120.0f) gc.camera.vfov = 120.0f;
+    update_camera_view();
 }
 
 void update_camera_view() 
@@ -934,7 +825,7 @@ void update_camera_view()
 
         The viewport height of 2.0 means the virtual screen is 2 world units tall
         Viewport goes from -1 to +1 in both X and Y directions
-        Camera at origin (0,0,0) looks at a 2×2 square centered at (0,0,-1)
+        camera_t at origin (0,0,0) looks at a 2×2 square centered at (0,0,-1)
 
                                             (0,1)
                                  ┌────────────┬───────────┐                         
@@ -1006,7 +897,7 @@ void init_camera(int window_width, f32 aspect_ratio)
     gc.camera.target = (vec3f_t){0.0f, 0.0f, 0.0f};
     gc.camera.up = (vec3f_t){0.0f, 1.0f, 0.0f};
     gc.camera.vfov  = 60.0f;
-    gc.camera.speed = 2.5f;
+    gc.camera.speed = 2.0f;
 
     gc.camera.defocus_angle = 0.6f;
     gc.camera.focus_dist = 10.0f;
@@ -1017,7 +908,433 @@ void init_camera(int window_width, f32 aspect_ratio)
     gc.max_depth = 2;
 }
 
-void *initGL(u32 width, u32 height)
+void poll_events(void)
+{
+    glfwPollEvents();
+}
+
+void render_to_screen(void *pixels, u32 width, u32 height)
+{
+    glBindTexture(GL_TEXTURE_2D, gc.texture);
+
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 
+                    (int)width, (int)height,
+                    GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, gc.read_fbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0); // make the default framebuffer active again ?
+    
+    // transfer pixel values from one region of a read framebuffer to another region of a draw framebuffer.
+    glBlitFramebuffer(0, 0, width, height,  // src
+                      0, height, width, 0,  // dst (flipped)    
+                      GL_COLOR_BUFFER_BIT,    
+                      GL_NEAREST);      
+}
+
+typedef enum {
+    EASE_LINEAR,
+    EASE_IN_QUAD,
+    EASE_OUT_QUAD,
+    EASE_IN_OUT_QUAD,
+    EASE_IN_CUBIC,
+    EASE_OUT_CUBIC,
+    EASE_IN_OUT_CUBIC,
+    EASE_IN_SINE,
+    EASE_OUT_SINE,
+    EASE_IN_OUT_SINE,
+    EASE_OUT_BOUNCE
+}easing_type;
+
+typedef struct {
+    u64         id;
+    f32         start_x, start_y;
+    f32         current_x, current_y;
+    f32         target_x, target_y;
+    f32         duration;
+    f32         elapsed;
+    easing_type easing;
+    bool        done;
+}animation_t;
+
+#define ANIMATION_MAX_ITEMS 32
+animation_t animation_items[ANIMATION_MAX_ITEMS];
+int animation_item_count;
+
+/* https://easings.net/ */
+float apply_easing(float t, easing_type easing) 
+{
+    switch (easing) 
+    {
+        case EASE_LINEAR:
+            return t;
+            
+        case EASE_IN_QUAD:
+            return t * t;
+            
+        case EASE_OUT_QUAD:
+            return t * (2 - t);
+            
+        case EASE_IN_OUT_QUAD:
+            if (t < 0.5f) return 2 * t * t;
+            return -1 + (4 - 2 * t) * t;
+            
+        case EASE_IN_CUBIC:
+            return t * t * t;
+            
+        case EASE_OUT_CUBIC:
+            return (--t) * t * t + 1;
+            
+        case EASE_IN_OUT_CUBIC:
+            if (t < 0.5f) return 4 * t * t * t;
+            return (t - 1) * (2 * t - 2) * (2 * t - 2) + 1;
+            
+        case EASE_IN_SINE:
+            return 1 - cosf(t * M_PI_2);
+            
+        case EASE_OUT_SINE:
+            return sinf(t * M_PI_2);
+            
+        case EASE_IN_OUT_SINE:
+            return -0.5f * (cosf(M_PI * t) - 1);
+
+        case EASE_OUT_BOUNCE:
+            const float n1 = 7.5625f;
+            const float d1 = 2.75f;
+
+            if (t < 1.0f / d1) {
+                return n1 * t * t;
+            } else if (t < 2.0f / d1) {
+                return n1 * (t -= 1.5f / d1) * t + 0.75f;
+            } else if (t < 2.5f / d1) {
+                return n1 * (t -= 2.25f / d1) * t + 0.9375f;
+            } else {
+                return n1 * (t -= 2.625f / d1) * t + 0.984375f;
+            }
+        default:
+            return t;
+    }
+}
+
+void animation_start(u64 id, float start_x, float start_y, 
+                     float target_x, float target_y, 
+                     float duration, easing_type easing) 
+{
+    for (int i = 0; i < animation_item_count; i++) 
+    {
+        animation_t *it = &animation_items[i];
+        if (it->id == id) {
+            it->elapsed = 0;
+            return;
+        }
+    }
+
+    // push new item if we have room
+    if (animation_item_count < ANIMATION_MAX_ITEMS) 
+    {
+        animation_items[animation_item_count++] = (animation_t){
+            .id = id,
+            .start_x = start_x,
+            .start_y = start_y,
+            .target_x = target_x,
+            .target_y = target_y,
+            .easing = easing,
+            .duration = duration,
+            .elapsed = 0,
+            .done = false
+        };
+    }
+}
+
+void animation_update(float dt) 
+{
+    for(int i = animation_item_count-1; i>=0; i--)
+    {
+        animation_t *anim = &animation_items[i];
+        
+        anim->elapsed += dt;
+        
+        if (anim->elapsed >= anim->duration) 
+        {
+            anim->done = true;
+            anim->current_x = anim->target_x;
+            anim->current_y = anim->target_y;
+            // remove it from the list when done
+            // just replace it with the last item and decrement the count
+            *anim = animation_items[--animation_item_count];
+            continue;
+        }
+        
+        float t = anim->elapsed / anim->duration;
+        float eased_t = apply_easing(t, anim->easing);
+        
+        anim->current_x = anim->start_x + (anim->target_x - anim->start_x) * eased_t;
+        anim->current_y = anim->start_y + (anim->target_y - anim->start_y) * eased_t;
+    }
+}
+
+vec2f_t animation_get(u64 id)
+{
+    for (int i = 0; i < animation_item_count; i++) 
+    {
+        animation_t *it = &animation_items[i];
+        if (it->id == id) {
+            return (vec2f_t){it->current_x,it->current_y};
+        }
+    }
+    return (vec2f_t){0.0f,0.0f};
+}
+
+void render_all(void)
+{
+    gc.draw_buffer.height = gc.screen_height;
+    gc.draw_buffer.width  = gc.screen_width;
+
+    u32 height       = gc.draw_buffer.height;
+    u32 width        = gc.draw_buffer.width;
+
+    PROFILE("Rendering : Allocating Frame Memory")
+    {
+        gc.draw_buffer.pixels = ARENA_ALLOC(gc.frame_arena, height * width * sizeof(color4_t));
+    }
+    
+    clear_screen(&gc.draw_buffer, HEX_TO_COLOR4(0x282a36));
+    
+    #if 0    
+    PROFILE("Rendering : Ray Tracing")
+    {
+        vec3f_t color;
+
+        for (u32 y = 0; y < height; ++y)
+        {
+            poll_events();
+            for(u32 x = 0; x < width; ++x)
+            {
+                color = (vec3f_t){0, 0, 0};
+                PROFILE("Ray Tracing: Getting Color")
+                {
+                    for(int sample = 0; sample < gc.samples_per_pixel; sample++)
+                    {
+                        ray_t ray = get_ray(x, y);
+                        color = vec3f_add(color, ray_color(ray, gc.max_depth));
+                    }
+                    color = vec3f_scale(color, (f32)1.0f/(f32)gc.samples_per_pixel);
+                    color = linear_to_gamma(color);
+                }
+                PROFILE("Just putting a pixel")
+                {
+                    set_pixel(&gc.draw_buffer, x, y, to_color4(color));
+                }
+            }
+            if(y%8)present_frame(&gc.draw_buffer);
+        }
+    }
+    #endif
+    
+    #if 1
+    PROFILE("Rendering : Scissors test")
+    {
+        draw_rect_outline_wh(&gc.draw_buffer, 50, 50, 200, 300, COLOR_MAGENTA);
+
+        push_scissor(50, 50, 200, 300);
+            draw_rect_scissored(&gc.draw_buffer,60, 60, 180, 500, COLOR_RED);   
+            draw_rect_scissored(&gc.draw_buffer,80, 200, 60, 40, COLOR_GREEN);
+            draw_rect_scissored(&gc.draw_buffer, gc.mouseX, gc.mouseY, 50, 30, COLOR_BLUE);
+        pop_scissor();
+
+        if(test_animation_move)
+        {
+            animation_start((u64)&test_animation.x, 
+                                test_animation.x, test_animation.y,
+                                new_x, new_y, 1.0f,
+                                EASE_OUT_BOUNCE);
+            test_animation_move = false;
+        }
+
+        animation_update(gc.dt);
+
+        vec2f_t res = animation_get((u64)&test_animation.x);
+        if(res.x != 0.0f && res.y != 0.0f){
+            test_animation.x = res.x;
+            test_animation.y = res.y;
+        }
+
+        draw_rect_scissored(&gc.draw_buffer, test_animation.x, test_animation.y,
+                            test_animation.w, test_animation.h, COLOR_YELLOW);   
+    }
+    #endif
+
+    PROFILE("Rendering : Text")
+    {
+        #if 1
+            u32 scale = 2;
+            u32 pos = gc.screen_width-20*gc.font->font_char_width*scale;
+
+            rendered_text_t text = {
+                .font = gc.font,
+                .pos = {.x=pos, .y=0},
+                .color = {.r = 255, .g = 255, .b = 255, .a=255},
+                .scale = scale,
+                .string = frametime
+            };
+            
+            sprintf(frametime,"%.2f ms", gc.dt*1000);
+            render_n_string_abs(&gc.draw_buffer, &text);
+        #endif
+
+        if(gc.profile)
+        {
+            render_prof_entries();
+        }
+    }
+    prof_buf_count = 0;
+    
+    if(gc.capture)
+    {
+        export_image(&gc.draw_buffer, "capture.tga");
+        gc.capture = false;
+    }
+}
+
+void present_frame(image_view_t* view) 
+{
+    render_to_screen(view->pixels, view->width, view->height);
+    glfwSwapBuffers((GLFWwindow*)gc.window);
+}
+
+void init_framebuffer(void)
+{
+    glGenTextures(1, &gc.texture);
+    glBindTexture(GL_TEXTURE_2D, gc.texture);
+
+    // Generate a full screen texture
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 
+                 (int)1920, (int)1080,
+                 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+
+    glGenFramebuffers(1, &gc.read_fbo);
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, gc.read_fbo);
+
+    // attach the texture to the framebuffer
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, gc.texture, 0);
+}
+
+sphere_t ground_sphere;
+sphere_t large_sphere_1;  // glass sphere at center
+sphere_t large_sphere_2;  // brown lambertian sphere
+sphere_t large_sphere_3;  // metal sphere
+sphere_t small_spheres[484]; // 22x22 grid, but some will be skipped
+
+void init_scene(void)
+{
+    gc.scene_objects = scene_array_create(0);
+    
+    ground_sphere = (sphere_t){
+        .mat = {
+            .mat_type = Lambertian,
+            .albedo = {0.5f, 0.5f, 0.5f}
+        },
+        .center = (vec3f_t){0.0f, -1000.0f, 0.0f},
+        .radius = 1000.0f
+    };
+    scene_array_add(gc.scene_objects, (scene_object_t){.type=Sphere, .object=&ground_sphere});
+    
+    #if 0
+        // Generate small random spheres
+        int sphere_count = 0;
+        for (int a = -11; a < 11; a++) {
+            for (int b = -11; b < 11; b++) {
+                f32 choose_mat = RAND_FLOAT();
+                vec3f_t center = (vec3f_t){
+                    a + 0.9f * RAND_FLOAT(), 
+                    0.2f, 
+                    b + 0.9f * RAND_FLOAT()
+                };
+                
+                // Check distance from point (4, 0.2, 0)
+                vec3f_t reference_point = (vec3f_t){4.0f, 0.2f, 0.0f};
+                vec3f_t diff = vec3f_sub(center, reference_point);
+                if (vec3f_length(diff) > 0.9f) {
+                    if (choose_mat < 0.8f) {
+                        // Diffuse material
+                        vec3f_t albedo = vec3f_mul(vec3f_random(), vec3f_random());
+                        small_spheres[sphere_count] = (sphere_t){
+                            .mat = {
+                                .mat_type = Lambertian,
+                                .albedo = albedo
+                            },
+                            .center = center,
+                            .radius = 0.2f
+                        };
+                    } else if (choose_mat < 0.95f) {
+                        // Metal material
+                        vec3f_t albedo = vec3f_random_range(0.5f, 1.0f);
+                        f32 fuzz = RAND_FLOAT_RANGE(0.0f, 0.5f);
+                        small_spheres[sphere_count] = (sphere_t){
+                            .mat = {
+                                .mat_type = Metal,
+                                .albedo = albedo,
+                                .fuzz = fuzz
+                            },
+                            .center = center,
+                            .radius = 0.2f
+                        };
+                    } else {
+                        // Glass material
+                        small_spheres[sphere_count] = (sphere_t){
+                            .mat = {
+                                .mat_type = Dielectric,
+                                .refraction_index = 1.5f
+                            },
+                            .center = center,
+                            .radius = 0.2f
+                        };
+                    }
+                    
+                    scene_array_add(gc.scene_objects, (scene_object_t){
+                        .type = Sphere, 
+                        .object = &small_spheres[sphere_count]
+                    });
+                    sphere_count++;
+                }
+            }
+        }
+    #endif
+
+    large_sphere_1 = (sphere_t){
+        .mat = {
+            .mat_type = Dielectric,
+            .refraction_index = 1.5f
+        },
+        .center = (vec3f_t){0.0f, 1.0f, 0.0f},
+        .radius = 1.0f
+    };
+    scene_array_add(gc.scene_objects, (scene_object_t){.type=Sphere, .object=&large_sphere_1});
+    
+    large_sphere_2 = (sphere_t){
+        .mat = {
+            .mat_type = Lambertian,
+            .albedo = {0.4f, 0.2f, 0.1f}
+        },
+        .center = (vec3f_t){-4.0f, 1.0f, 0.0f},
+        .radius = 1.0f
+    };
+    scene_array_add(gc.scene_objects, (scene_object_t){.type=Sphere, .object=&large_sphere_2});
+    
+    large_sphere_3 = (sphere_t){
+        .mat = {
+            .mat_type = Metal,
+            .albedo = {0.7f, 0.6f, 0.5f},
+            .fuzz = 0.0f
+        },
+        .center = (vec3f_t){4.0f, 1.0f, 0.0f},
+        .radius = 1.0f
+    };
+    scene_array_add(gc.scene_objects, (scene_object_t){.type=Sphere, .object=&large_sphere_3});
+}
+
+void *create_window(u32 width, u32 height, char *title)
 {
     if (!glfwInit()) {
         fprintf(stderr, "Failed to initialize GLFW\n");
@@ -1032,7 +1349,7 @@ void *initGL(u32 width, u32 height)
 
     
     GLFWwindow *window = CHECK_PTR(glfwCreateWindow((int)gc.screen_width, (int)gc.screen_height,
-                                                    "RayTracer", NULL, NULL));
+                                                    title, NULL, NULL));
 
     glfwMakeContextCurrent(window);
 
@@ -1064,161 +1381,22 @@ void *initGL(u32 width, u32 height)
     return window;
 }
 
-void initFB()
-{
-    glGenTextures(1, &gc.texture);
-    glBindTexture(GL_TEXTURE_2D, gc.texture);
-
-    // Generate a full screen texture
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 
-                 (int)1920, (int)1080,
-                 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-
-    glGenFramebuffers(1, &gc.read_fbo);
-
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, gc.read_fbo);
-
-    // attach the texture to the framebuffer
-    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                           GL_TEXTURE_2D, gc.texture, 0);
-}
-
-sphere_t ground_sphere;
-sphere_t large_sphere_1;  // glass sphere at center
-sphere_t large_sphere_2;  // brown lambertian sphere
-sphere_t large_sphere_3;  // metal sphere
-sphere_t small_spheres[484]; // 22x22 grid, but some will be skipped
-
-void init_scene(void)
-{
-    gc.scene_objects = scene_array_create(0);
-    
-    // Ground sphere (large sphere acting as ground)
-    ground_sphere = (sphere_t){
-        .mat = {
-            .mat_type = Lambertian,
-            .albedo = {0.5f, 0.5f, 0.5f}
-        },
-        .center = (vec3f_t){0.0f, -1000.0f, 0.0f},
-        .radius = 1000.0f
-    };
-    scene_array_add(gc.scene_objects, (scene_object_t){.type=Sphere, .object=&ground_sphere});
-    
-    #if 0
-    // Generate small random spheres
-    int sphere_count = 0;
-    for (int a = -11; a < 11; a++) {
-        for (int b = -11; b < 11; b++) {
-            f32 choose_mat = RAND_FLOAT();
-            vec3f_t center = (vec3f_t){
-                a + 0.9f * RAND_FLOAT(), 
-                0.2f, 
-                b + 0.9f * RAND_FLOAT()
-            };
-            
-            // Check distance from point (4, 0.2, 0)
-            vec3f_t reference_point = (vec3f_t){4.0f, 0.2f, 0.0f};
-            vec3f_t diff = vec3f_sub(center, reference_point);
-            if (vec3f_length(diff) > 0.9f) {
-                if (choose_mat < 0.8f) {
-                    // Diffuse material
-                    vec3f_t albedo = vec3f_mul(vec3f_random(), vec3f_random());
-                    small_spheres[sphere_count] = (sphere_t){
-                        .mat = {
-                            .mat_type = Lambertian,
-                            .albedo = albedo
-                        },
-                        .center = center,
-                        .radius = 0.2f
-                    };
-                } else if (choose_mat < 0.95f) {
-                    // Metal material
-                    vec3f_t albedo = vec3f_random_range(0.5f, 1.0f);
-                    f32 fuzz = RAND_FLOAT_RANGE(0.0f, 0.5f);
-                    small_spheres[sphere_count] = (sphere_t){
-                        .mat = {
-                            .mat_type = Metal,
-                            .albedo = albedo,
-                            .fuzz = fuzz
-                        },
-                        .center = center,
-                        .radius = 0.2f
-                    };
-                } else {
-                    // Glass material
-                    small_spheres[sphere_count] = (sphere_t){
-                        .mat = {
-                            .mat_type = Dielectric,
-                            .refraction_index = 1.5f
-                        },
-                        .center = center,
-                        .radius = 0.2f
-                    };
-                }
-                
-                scene_array_add(gc.scene_objects, (scene_object_t){
-                    .type = Sphere, 
-                    .object = &small_spheres[sphere_count]
-                });
-                sphere_count++;
-            }
-        }
-    }
-    #endif
-    // Three large featured spheres
-    
-    // Large glass sphere at center
-    large_sphere_1 = (sphere_t){
-        .mat = {
-            .mat_type = Dielectric,
-            .refraction_index = 1.5f
-        },
-        .center = (vec3f_t){0.0f, 1.0f, 0.0f},
-        .radius = 1.0f
-    };
-    scene_array_add(gc.scene_objects, (scene_object_t){.type=Sphere, .object=&large_sphere_1});
-    
-    // Large brown lambertian sphere
-    large_sphere_2 = (sphere_t){
-        .mat = {
-            .mat_type = Lambertian,
-            .albedo = {0.4f, 0.2f, 0.1f}
-        },
-        .center = (vec3f_t){-4.0f, 1.0f, 0.0f},
-        .radius = 1.0f
-    };
-    scene_array_add(gc.scene_objects, (scene_object_t){.type=Sphere, .object=&large_sphere_2});
-    
-    // Large metal sphere
-    large_sphere_3 = (sphere_t){
-        .mat = {
-            .mat_type = Metal,
-            .albedo = {0.7f, 0.6f, 0.5f},
-            .fuzz = 0.0f
-        },
-        .center = (vec3f_t){4.0f, 1.0f, 0.0f},
-        .radius = 1.0f
-    };
-    scene_array_add(gc.scene_objects, (scene_object_t){.type=Sphere, .object=&large_sphere_3});
-}
-
 bool init_all(void)
 {
     f32 aspect_ratio = 16.0f / 9.0f;
-
-    u32 window_width = 800;
+    u32 window_width = 1000;
 
     init_camera(window_width, aspect_ratio);
     init_scene();
 
-    gc.window = initGL(gc.screen_width, gc.screen_height);
+    gc.window = create_window(gc.screen_width, gc.screen_height, "Ray");
 
     // Preallocate it 
     gc.frame_arena = arena_new();
     (void)ARENA_ALLOC(gc.frame_arena, 1024*1024*10);
     arena_reset(gc.frame_arena);
 
-    initFB();
+    init_framebuffer();
 
     gc.font = init_font((u32*)font_pixels);
     
@@ -1249,7 +1427,7 @@ int main(void)
 {   
     init_all();
 
-    while(!glfwWindowShouldClose(gc.window))
+    while(!glfwWindowShouldClose((GLFWwindow*)gc.window))
     {
         poll_events();
 
@@ -1273,4 +1451,3 @@ int main(void)
     }
     return 0;
 }
- 
