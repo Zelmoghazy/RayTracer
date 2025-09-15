@@ -136,6 +136,9 @@ void arena_push_block(arena_t *arena, arena_t *new_block, byte *cap)
 
 void *arena_alloc(arena_t *arena, long nbytes, bool first_fit, const char *file, int line) 
 {
+    (void) file;
+    (void) line;
+    
     assert(arena);
     assert(nbytes > 0);
 

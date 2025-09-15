@@ -1,7 +1,5 @@
 #include "base_graphics.h"
 
-
-
 scissor_region_t scissor_stack[MAX_SCISSOR_STACK];
 u32 scissor_stack_size;
 rect_t current_scissor;
@@ -10,7 +8,7 @@ bool scissor_enabled;
 /*
     convert normalized color to 0->255 range
 */
-inline color4_t to_color4(vec3f_t const c)
+color4_t to_color4(vec3f_t const c)
 {
     color4_t res = {
         .r = (u8)MAX(0.0f, MIN(255.0f, c.x * 255.0f)),
@@ -56,7 +54,7 @@ inline color4_t blend_pixel(color4_t dst, color4_t src)
     if (src.a == 255) return src;
     if (src.a == 0)   return dst;
     
-    u32 inv_alpha = 255 - src.a;
+    u8 inv_alpha = 255 - src.a;
 
     // Linear interpolation between source and destination
     color4_t result = {
@@ -375,7 +373,7 @@ void draw_ellipse(image_view_t *img, i32 cx, i32 cy, i32 rx, i32 ry, color4_t co
     }
     
     // Region 2
-    p = ry2 * (x + 0.5) * (x + 0.5) + rx2 * (y - 1) * (y - 1) - rx2 * ry2;
+    p = (i32)(ry2 * (x + 0.5) * (x + 0.5) + rx2 * (y - 1) * (y - 1) - rx2 * ry2);
     while (y >= 0) {
         set_pixel_blend(img, cx + x, cy + y, color);
         set_pixel_blend(img, cx - x, cy + y, color);
@@ -616,15 +614,48 @@ void export_image(image_view_t const *color_buf, const char *filename)
     fclose(file);
 }
 
-void render_glyph_to_buffer(rendered_text_t *text, u32 glyph_idx,
-                               image_view_t const *color_buf,
-                               u32 dst_x, u32 dst_y)
+font_t* init_font(u32 *font_pixels)
 {
+    font_t *font = malloc(sizeof(*font));
+    assert(font);
+
+    font->font_pixels = (u32*)font_pixels;
+    font->font_width  = 128;
+    font->font_height = 55;
+
+    font->font_char_height =  (u32)(font->font_height/FONT_ROWS); 
+    font->font_char_width  =  (u32)(font->font_width/FONT_COLS); 
+
+    for(u32 i = ASCII_LOW; i <= ASCII_HIGH; i++)
+    {
+        const u32 index  = i - ASCII_LOW;        // ascii to index
+        const u32 col    = index % FONT_COLS;
+        const u32 row    = index / FONT_COLS;
+
+        font->glyph_table[index] = (rect_t){
+            .x = (col * font->font_char_width),
+            .y = (row * font->font_char_height),
+            .w = (font->font_char_width),
+            .h = (font->font_char_height),
+        };
+    }
+
+    return font;
+}
+
+void render_glyph_to_buffer(rendered_text_t *text, u32 glyph_idx,
+                            image_view_t const *color_buf,
+                            u32 dst_x, u32 dst_y)
+{
+    // where the glyph exists in the atlas
     const rect_t *src_rect = &(text->font->glyph_table[glyph_idx]);
     u32 src_width = text->font->font_width;
+
     u32 dst_w = text->font->font_char_width * text->scale;
     u32 dst_h = text->font->font_char_height * text->scale;
 
+
+    // Completely outside the screen
     if (dst_x >= color_buf->width || 
         dst_y >= color_buf->height)
     {
@@ -642,6 +673,8 @@ void render_glyph_to_buffer(rendered_text_t *text, u32 glyph_idx,
     u32 x_end = (dst_x + dst_w > color_buf->width) ? color_buf->width : dst_x + dst_w;
     u32 y_end = (dst_y + dst_h > color_buf->height) ? color_buf->height : dst_y + dst_h;
     
+    // how much we scale it from how its represented in the atlas
+    // this is the most annoying part here that we have to think about
     f32 x_scale = (f32)src_rect->w / dst_w;
     f32 y_scale = (f32)src_rect->h / dst_h;
     
@@ -656,14 +689,14 @@ void render_glyph_to_buffer(rendered_text_t *text, u32 glyph_idx,
             u32 src_y = (u32)src_rect->y + (u32)((f32)rel_y * y_scale);
             
             if (src_x >= 0 && src_x < src_width && 
-                src_y >= 0 && src_y < (src_rect->y + src_rect->h)) 
+                src_y >= 0 && src_y < (u32)(src_rect->y + src_rect->h)) 
             {
-                
                 uint32_t src_pixel_raw = text->font->font_pixels[src_y * src_width + src_x];
 
                 color4_t src_pixel;
-                HEX_TO_RGBA(src_pixel,src_pixel_raw);
+                HEX_TO_RGBA(src_pixel, src_pixel_raw);
                 
+                // blit the font to the buffer
                 if (src_pixel.r != 0 || src_pixel.g != 0 || src_pixel.b != 0) {
                     BUF_AT(color_buf,x,y) = src_pixel;
                 }
@@ -716,36 +749,6 @@ void render_n_string_abs(image_view_t const *color_buf, rendered_text_t *text)
         string++;
     }
 }
-
-font_t* init_font(u32 *font_pixels)
-{
-    font_t *font = malloc(sizeof(*font));
-    assert(font);
-
-    font->font_pixels = (u32*)font_pixels;
-    font->font_width  = 128;
-    font->font_height = 55;
-
-    font->font_char_height =  (u32)(font->font_height/FONT_ROWS); 
-    font->font_char_width  =  (u32)(font->font_width/FONT_COLS); 
-
-    for(u32 i = ASCII_LOW; i <= ASCII_HIGH; i++)
-    {
-        const u32 index  = i - ASCII_LOW;        // ascii to index
-        const u32 col    = index % FONT_COLS;
-        const u32 row    = index / FONT_COLS;
-
-        font->glyph_table[index] = (rect_t){
-            .x = (col * font->font_char_width),
-            .y = (row * font->font_char_height),
-            .w = (font->font_char_width),
-            .h = (font->font_char_height),
-        };
-    }
-
-    return font;
-}
-
 
 bool inside_rect(i32 x, i32 y, rect_t *s)
 {

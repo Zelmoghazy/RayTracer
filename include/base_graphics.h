@@ -82,7 +82,7 @@ extern u32 scissor_stack_size;
 extern rect_t current_scissor;
 extern bool scissor_enabled;
 
-inline color4_t to_color4(vec3f_t const c);
+color4_t to_color4(vec3f_t const c);
 vec3f_t linear_to_gamma(vec3f_t color);
 inline void set_pixel(image_view_t const *img, i32 x, i32 y, color4_t color);
 inline color4_t get_pixel(image_view_t const *img, i32 x, i32 y);

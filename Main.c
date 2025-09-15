@@ -13,6 +13,57 @@
 #include "./include/arena.h"
 #include "./include/base_graphics.h"
 
+#ifdef _WIN32
+    typedef HANDLE thread_handle_t;
+    typedef DWORD (WINAPI *thread_func_t)(LPVOID);
+    #define THREAD_FUNC_RETURN DWORD WINAPI
+    #define THREAD_FUNC_PARAM  LPVOID
+#else
+    #include <pthread.h>
+    typedef pthread_t thread_handle_t;
+    typedef void* (*thread_func_t)(void*);
+    #define THREAD_FUNC_RETURN void*
+    #define THREAD_FUNC_PARAM void*
+#endif
+
+thread_handle_t create_thread(thread_func_t func, void* data)
+{
+    #ifdef _WIN32
+        return CreateThread(NULL,  // security attribute -no idea- NULL means default 
+                             0,    // stack size zero means default size 
+                             func, // pointer to the function to be executed by the thread
+                             data, // pointer to the params passed to the thread
+                              0,   // run immediately
+                              NULL // dont return identifier
+                            );
+    #else
+        pthread_t thread;
+        pthread_create(&thread, NULL, func, data);
+        return thread;
+    #endif
+}
+
+void join_thread(thread_handle_t thread) 
+{
+    #ifdef _WIN32
+        WaitForSingleObject(thread, INFINITE);
+        CloseHandle(thread);
+    #else
+        pthread_join(thread, NULL);
+    #endif
+}
+
+int get_core_count(void) 
+{
+    #ifdef _WIN32
+        SYSTEM_INFO sysinfo;
+        GetSystemInfo(&sysinfo);
+        return sysinfo.dwNumberOfProcessors;
+    #else
+        return sysconf(_SC_NPROCESSORS_ONLN);
+    #endif
+}
+
 typedef struct ray_t
 {
     vec3f_t  orig;
@@ -44,18 +95,18 @@ typedef struct camera_t
 
 enum material_type
 {
-    Lambertian,
+    Lambertian,     // Perfectly diffuse light ?
     Metal,     
-    Dielectric,
-    Emissive,  
+    Dielectric,     // Glass like
+    Emissive,       
 };
 
 typedef struct material_t
 {
     enum material_type mat_type;
     vec3f_t albedo;                 // whiteness
-    f32 fuzz;                     // Lambertian
-    f32 refraction_index;         // Dielectric
+    f32 fuzz;                       // Lambertian
+    f32 refraction_index;           // Dielectric
 }material_t;
 
 typedef struct hit_record_t
@@ -90,6 +141,9 @@ typedef struct scene_objects_t
     size_t count;               
     size_t capacity;            
 } scene_objects_t;
+
+#define FRAME_HISTORY_SIZE  64
+#define BUFFER_SIZE         512
 
 struct context_t
 {
@@ -138,21 +192,25 @@ struct context_t
 
     /* TIME */
     u32                 start_time;
-    f32                 dt;
     u64                 last_render_time;
+    f64                 dt;
     u64                 render_interval;
     #ifdef _WIN32
         LARGE_INTEGER   last_frame_start;
     #else
         struct timespec last_frame_start;
     #endif
+    f64                 frame_history[FRAME_HISTORY_SIZE];
+    i32                 frame_idx;
+    f64                 average_frame_time;
+    f64                 current_fps;
 
     arena_t             *frame_arena;
 }gc;
 
-char frametime[512];
+char frametime[BUFFER_SIZE];
 
-char prof_buf[64][512];
+char prof_buf[64][BUFFER_SIZE];
 i32 prof_buf_count;
 i32 prof_max_width;
 
@@ -278,24 +336,24 @@ void getMouseDelta(f32 *xoffset, f32 *yoffset)
 {
     if (gc.firstMouse)
     {
-        gc.mouseLastX = (f32)gc.mouseX;
-        gc.mouseLastY = (f32)gc.mouseY;
+        gc.mouseLastX = gc.mouseX;
+        gc.mouseLastY = gc.mouseY;
         gc.firstMouse = false;
     }
 
-    *xoffset = (f32)gc.mouseX - gc.mouseLastX;
-    *yoffset = gc.mouseLastY - (f32)gc.mouseY; // reversed since y-coordinates range from bottom to top
+    *xoffset = (f32)gc.mouseX - (f32)gc.mouseLastX;
+    *yoffset = (f32)gc.mouseLastY - (f32)gc.mouseY; // reversed since y-coordinates range from bottom to top
 
-    gc.mouseLastX = (f32)gc.mouseX;
-    gc.mouseLastY = (f32)gc.mouseY;
+    gc.mouseLastX = gc.mouseX;
+    gc.mouseLastY = gc.mouseY;
 }
 
-void mouse_callback(GLFWwindow* window, double xpos, double ypos)
+void mouse_callback(GLFWwindow* window, f64 xpos, f64 ypos)
 {
     (void)window;
 
-    gc.mouseX = (f32)xpos;
-    gc.mouseY = (f32)ypos;
+    gc.mouseX = (u32)xpos;
+    gc.mouseY = (u32)ypos;
 
     f32 xoffset, yoffset;
     getMouseDelta(&xoffset, &yoffset);
@@ -314,6 +372,8 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
     f32 scroll_sensitivity = 20.0f;
     f32 scaled_x = (f32)xoffset * scroll_sensitivity;
     f32 scaled_y = (f32)yoffset * scroll_sensitivity;
+    (void)scaled_x;
+    (void)scaled_y;
 }
 
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
@@ -339,6 +399,10 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 
 void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) 
 {
+    (void)window;
+    (void)scancode;
+    (void)mods;
+
     if (action == GLFW_PRESS || action == GLFW_REPEAT) 
     {
         switch (key) {
@@ -451,6 +515,8 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 
 void charCallback(GLFWwindow* window, unsigned int codepoint) 
 {
+    (void)window;
+
     if (codepoint >= 32 && codepoint <= 126) {
 
     }
@@ -458,6 +524,7 @@ void charCallback(GLFWwindow* window, unsigned int codepoint)
 
 void set_dark_mode(GLFWwindow *window)
 {
+    (void)window;
     #if 0
     #ifdef _WIN32
         HWND hwnd = /**/0;
@@ -476,12 +543,12 @@ void prof_record_results(void)
     {
         if (g_prof_storage.entries[i].hit_count > 0) 
         {
-            sprintf(prof_buf[i],"[PROFILE] %s[%llu]: %.6f ms (total)", 
+            snprintf(prof_buf[i], BUFFER_SIZE, "[PROFILE] %s[%llu]: %.6f ms (total)", 
                    g_prof_storage.entries[i].label,
                    (unsigned long long)g_prof_storage.entries[i].hit_count,
                    g_prof_storage.entries[i].elapsed_ms);
 
-            int text_length = strlen(prof_buf[i]);
+            i32 text_length = (i32)strlen(prof_buf[i]);
             if(text_length > prof_max_width){
                 prof_max_width = text_length;
             }
@@ -534,6 +601,7 @@ void set_face_normal(hit_record_t *record, ray_t *ray, vec3f_t *outward_normal)
     }
 }
 
+// Schlick Approximation
 f32 reflectance(f32 cosine, f32 refraction_index)
 {
     f32 r0 = (1-refraction_index)/(1+refraction_index);
@@ -568,16 +636,20 @@ bool ray_scatter(ray_t *ray_in, hit_record_t *hit_info, vec3f_t *attenuation, ra
 
         case Dielectric:
             *attenuation = (vec3f_t){1.0f,1.0f,1.0f};
+
+            // refraction index ratio based on whether the ray is entering or exiting the material
             f32 ri = hit_info->front_face ? (1.0f/hit_info->mat.refraction_index) : hit_info->mat.refraction_index;
 
             vec3f_t unit_direction = vec3f_unit(ray_in->dir);
 
-            f32 cos_theta = fmin(vec3f_dot(vec3f_scale(unit_direction,-1.0f), hit_info->norm), 1.0f);
-            f32 sin_theta = sqrt_f32(1.0f-cos_theta*cos_theta);
+            // angle between incoming ray and the normal
+            f32 cos_theta = (f32)fmin(vec3f_dot(vec3f_scale(unit_direction,-1.0f), hit_info->norm), 1.0f);
+            f32 sin_theta = (f32)sqrt_f32(1.0f-cos_theta*cos_theta);
 
-            bool cannot_refract = ri * sin_theta > 1.0;
+            bool cannot_refract = ri * sin_theta > 1.0; // Total Internal Reflection
             vec3f_t direction;
 
+            // Fresnel Reflectance
             if(cannot_refract || reflectance(cos_theta,ri) > RAND_FLOAT())
             {
 
@@ -727,7 +799,7 @@ vec3f_t ray_color(ray_t ray, int depth)
             vec3f_t unit_dir = vec3f_unit(current_ray.dir);
         
             // gradient among the y-axis
-            f32 blend_factor = 0.5 * (unit_dir.y + 1.0);
+            f32 blend_factor = 0.5f * (unit_dir.y + 1.0f);
         
             vec3f_t col_norm = vec3f_lerp(
                 (vec3f_t){1.0,1.0,1.0}, // white 
@@ -745,7 +817,7 @@ vec3f_t ray_color(ray_t ray, int depth)
 vec3f_t sample_square()
 {
     // Returns the vector to a random point in the [-.5,-.5]-[+.5,+.5] unit square.
-    return (vec3f_t){RAND_FLOAT() - 0.5, RAND_FLOAT() - 0.5, 0};
+    return (vec3f_t){RAND_FLOAT() - 0.5f, RAND_FLOAT() - 0.5f, 0.0f};
 }
 
 vec3f_t defocus_disk_sample()
@@ -904,8 +976,8 @@ void init_camera(int window_width, f32 aspect_ratio)
 
     update_camera_view();
 
-    gc.samples_per_pixel = 1;
-    gc.max_depth = 2;
+    gc.samples_per_pixel = 10;
+    gc.max_depth = 20;
 }
 
 void poll_events(void)
@@ -950,8 +1022,8 @@ typedef struct {
     f32         start_x, start_y;
     f32         current_x, current_y;
     f32         target_x, target_y;
-    f32         duration;
-    f32         elapsed;
+    f64         duration;
+    f64         elapsed;
     easing_type easing;
     bool        done;
 }animation_t;
@@ -961,7 +1033,7 @@ animation_t animation_items[ANIMATION_MAX_ITEMS];
 int animation_item_count;
 
 /* https://easings.net/ */
-float apply_easing(float t, easing_type easing) 
+f64 apply_easing(f64 t, easing_type easing) 
 {
     switch (easing) 
     {
@@ -972,58 +1044,64 @@ float apply_easing(float t, easing_type easing)
             return t * t;
             
         case EASE_OUT_QUAD:
-            return t * (2 - t);
+            return t * (2.0 - t);
             
         case EASE_IN_OUT_QUAD:
-            if (t < 0.5f) return 2 * t * t;
-            return -1 + (4 - 2 * t) * t;
+            if (t < 0.5) return 2.0 * t * t;
+            return -1.0 + (4.0 - 2.0 * t) * t;
             
         case EASE_IN_CUBIC:
             return t * t * t;
             
         case EASE_OUT_CUBIC:
-            return (--t) * t * t + 1;
+            return (--t) * t * t + 1.0;
             
         case EASE_IN_OUT_CUBIC:
-            if (t < 0.5f) return 4 * t * t * t;
-            return (t - 1) * (2 * t - 2) * (2 * t - 2) + 1;
+            if (t < 0.5) return 4.0 * t * t * t;
+            return (t - 1.0) * (2.0 * t - 2.0) * (2.0 * t - 2.0) + 1.0;
             
         case EASE_IN_SINE:
-            return 1 - cosf(t * M_PI_2);
+            return 1.0 - (f64)cosf(t * M_PI_2);
             
         case EASE_OUT_SINE:
-            return sinf(t * M_PI_2);
+            return (f64)sinf(t * M_PI_2);
             
         case EASE_IN_OUT_SINE:
-            return -0.5f * (cosf(M_PI * t) - 1);
+            return -0.5 * ((f64)cosf(M_PI * t) - 1.0);
 
         case EASE_OUT_BOUNCE:
-            const float n1 = 7.5625f;
-            const float d1 = 2.75f;
+            const f64 n1 = 7.5625;
+            const f64 d1 = 2.75;
 
-            if (t < 1.0f / d1) {
+            if (t < 1.0 / d1) {
                 return n1 * t * t;
-            } else if (t < 2.0f / d1) {
-                return n1 * (t -= 1.5f / d1) * t + 0.75f;
-            } else if (t < 2.5f / d1) {
-                return n1 * (t -= 2.25f / d1) * t + 0.9375f;
+            } else if (t < 2.0 / d1) {
+                return n1 * (t -= 1.5 / d1) * t + 0.75;
+            } else if (t < 2.5 / d1) {
+                return n1 * (t -= 2.25 / d1) * t + 0.9375;
             } else {
-                return n1 * (t -= 2.625f / d1) * t + 0.984375f;
+                return n1 * (t -= 2.625 / d1) * t + 0.984375;
             }
         default:
             return t;
     }
 }
 
-void animation_start(u64 id, float start_x, float start_y, 
-                     float target_x, float target_y, 
-                     float duration, easing_type easing) 
+void animation_start(u64 id, f32 start_x, f32 start_y, 
+                     f32 target_x, f32 target_y, 
+                     f32 duration, easing_type easing) 
 {
     for (int i = 0; i < animation_item_count; i++) 
     {
         animation_t *it = &animation_items[i];
         if (it->id == id) {
+            // it->elapsed = 0;      
+            it->start_x = it->current_x;
+            it->start_y = it->current_y;      
+            it->target_x = target_x;
+            it->target_y = target_y;
             it->elapsed = 0;
+            it->duration = duration;
             return;
         }
     }
@@ -1045,7 +1123,7 @@ void animation_start(u64 id, float start_x, float start_y,
     }
 }
 
-void animation_update(float dt) 
+void animation_update(f64 dt) 
 {
     for(int i = animation_item_count-1; i>=0; i--)
     {
@@ -1056,6 +1134,7 @@ void animation_update(float dt)
         if (anim->elapsed >= anim->duration) 
         {
             anim->done = true;
+            // clamp it to target
             anim->current_x = anim->target_x;
             anim->current_y = anim->target_y;
             // remove it from the list when done
@@ -1064,24 +1143,150 @@ void animation_update(float dt)
             continue;
         }
         
-        float t = anim->elapsed / anim->duration;
-        float eased_t = apply_easing(t, anim->easing);
+        // progress in animation
+        f64 t = anim->elapsed / anim->duration;
+        f64 eased_t = apply_easing(t, anim->easing);
         
-        anim->current_x = anim->start_x + (anim->target_x - anim->start_x) * eased_t;
-        anim->current_y = anim->start_y + (anim->target_y - anim->start_y) * eased_t;
+        anim->current_x = LERP_F32(anim->start_x, anim->target_x, eased_t);
+        anim->current_y = LERP_F32(anim->start_y, anim->target_y, eased_t);
     }
 }
 
-vec2f_t animation_get(u64 id)
+void animation_get(u64 id, f32 *current_x, f32 *current_y)
 {
     for (int i = 0; i < animation_item_count; i++) 
     {
         animation_t *it = &animation_items[i];
+
         if (it->id == id) {
-            return (vec2f_t){it->current_x,it->current_y};
+            *current_x = it->current_x;
+            *current_y = it->current_y;
         }
     }
-    return (vec2f_t){0.0f,0.0f};
+}
+
+typedef struct {
+    u32 start_x, end_x;
+    u32 start_y, end_y;
+    u32 width, height;
+} tile_data_t;
+
+
+THREAD_FUNC_RETURN render_tile(THREAD_FUNC_PARAM data) 
+{
+    tile_data_t *tile = (tile_data_t *)data;
+
+    vec3f_t color;
+    
+    for (u32 y = tile->start_y; y < tile->end_y; ++y) 
+    {
+        for (u32 x = tile->start_x; x < tile->end_x; ++x) 
+        {
+            color = (vec3f_t){0, 0, 0};
+            for (int sample = 0; sample < gc.samples_per_pixel; sample++) 
+            {
+                ray_t ray = get_ray(x, y);
+                color = vec3f_add(color, ray_color(ray, gc.max_depth));
+            }
+            color = vec3f_scale(color, (f32)1.0f/(f32)gc.samples_per_pixel);
+            color = linear_to_gamma(color);
+            set_pixel(&gc.draw_buffer, x, y, to_color4(color));
+        }
+    }
+
+    #ifdef _WIN32
+        return 0;
+    #else
+        return NULL;
+    #endif
+}
+
+void render_all_parallel(void)
+{
+    gc.draw_buffer.height = gc.screen_height;
+    gc.draw_buffer.width  = gc.screen_width;
+
+    u32 height       = gc.draw_buffer.height;
+    u32 width        = gc.draw_buffer.width;
+
+    gc.draw_buffer.pixels = ARENA_ALLOC(gc.frame_arena, height * width * sizeof(color4_t));
+
+    clear_screen(&gc.draw_buffer, HEX_TO_COLOR4(0x282a36));
+
+    int num_threads = get_core_count();
+    const u32 tile_size = 64;
+
+    u32 tiles_x = CEIL_DIV(width, tile_size);
+    u32 tiles_y = CEIL_DIV(height, tile_size);
+    u32 total_tiles = tiles_x * tiles_y;
+
+    tile_data_t* tiles = malloc(total_tiles * sizeof(tile_data_t));
+    thread_handle_t* threads = malloc(num_threads * sizeof(thread_handle_t));
+
+    u32 tile_idx = 0;
+    
+    for (u32 ty = 0; ty < tiles_y; ty++) 
+    {
+        u32 start_y = ty * tile_size;
+        u32 end_y = (start_y + tile_size > height) ? height : start_y + tile_size;
+        
+        for (u32 tx = 0; tx < tiles_x; tx++) 
+        {
+            u32 start_x = tx * tile_size;
+            u32 end_x = (start_x + tile_size > width) ? width : start_x + tile_size;
+            
+            tiles[tile_idx] = (tile_data_t){
+                .start_x = start_x, .end_x = end_x,
+                .start_y = start_y, .end_y = end_y,
+                .width = width, .height = height
+            };
+            
+            int thread_slot = tile_idx % num_threads;
+            
+            if (tile_idx >= num_threads) {
+                join_thread(threads[thread_slot]);
+            }
+            
+            threads[thread_slot] = create_thread(render_tile, &tiles[tile_idx]);
+            
+            tile_idx++;
+        }
+    }
+    int remaining_threads = (total_tiles < num_threads) ? total_tiles : num_threads;
+
+    for (int i = 0; i < remaining_threads; i++) {
+        join_thread(threads[i]);
+    }
+
+    u32 scale = 2;
+    u32 pos = gc.screen_width-20*gc.font->font_char_width*scale;
+
+    rendered_text_t text = {
+        .font = gc.font,
+        .pos = {.x=pos, .y=0},
+        .color = {.r = 255, .g = 255, .b = 255, .a=255},
+        .scale = scale,
+        .string = frametime
+    };
+    
+    snprintf(frametime, BUFFER_SIZE, "%.2f ms, %d cores", gc.average_frame_time*1000,num_threads);
+    render_n_string_abs(&gc.draw_buffer, &text);
+
+    if(gc.profile)
+    {
+        render_prof_entries();
+    }
+
+    prof_buf_count = 0;
+    
+    if(gc.capture)
+    {
+        export_image(&gc.draw_buffer, "capture.tga");
+        gc.capture = false;
+    }
+
+    free(tiles);
+    free(threads);
 }
 
 void render_all(void)
@@ -1092,45 +1297,31 @@ void render_all(void)
     u32 height       = gc.draw_buffer.height;
     u32 width        = gc.draw_buffer.width;
 
-    PROFILE("Rendering : Allocating Frame Memory")
-    {
-        gc.draw_buffer.pixels = ARENA_ALLOC(gc.frame_arena, height * width * sizeof(color4_t));
-    }
+    gc.draw_buffer.pixels = ARENA_ALLOC(gc.frame_arena, height * width * sizeof(color4_t));
     
     clear_screen(&gc.draw_buffer, HEX_TO_COLOR4(0x282a36));
     
-    #if 0    
-    PROFILE("Rendering : Ray Tracing")
-    {
+    #if 1    
         vec3f_t color;
 
         for (u32 y = 0; y < height; ++y)
         {
-            poll_events();
             for(u32 x = 0; x < width; ++x)
             {
                 color = (vec3f_t){0, 0, 0};
-                PROFILE("Ray Tracing: Getting Color")
+                for(int sample = 0; sample < gc.samples_per_pixel; sample++)
                 {
-                    for(int sample = 0; sample < gc.samples_per_pixel; sample++)
-                    {
-                        ray_t ray = get_ray(x, y);
-                        color = vec3f_add(color, ray_color(ray, gc.max_depth));
-                    }
-                    color = vec3f_scale(color, (f32)1.0f/(f32)gc.samples_per_pixel);
-                    color = linear_to_gamma(color);
+                    ray_t ray = get_ray(x, y);
+                    color = vec3f_add(color, ray_color(ray, gc.max_depth));
                 }
-                PROFILE("Just putting a pixel")
-                {
-                    set_pixel(&gc.draw_buffer, x, y, to_color4(color));
-                }
+                color = vec3f_scale(color, (f32)1.0f/(f32)gc.samples_per_pixel);
+                color = linear_to_gamma(color);
+                set_pixel(&gc.draw_buffer, x, y, to_color4(color));
             }
-            if(y%8)present_frame(&gc.draw_buffer);
         }
-    }
     #endif
     
-    #if 1
+    #if 0
     PROFILE("Rendering : Scissors test")
     {
         draw_rect_outline_wh(&gc.draw_buffer, 50, 50, 200, 300, COLOR_MAGENTA);
@@ -1145,47 +1336,41 @@ void render_all(void)
         {
             animation_start((u64)&test_animation.x, 
                                 test_animation.x, test_animation.y,
-                                new_x, new_y, 1.0f,
-                                EASE_OUT_BOUNCE);
+                                (f32)new_x, (f32)new_y, 1.0f,
+                                EASE_IN_OUT_QUAD);
             test_animation_move = false;
+            animation_update(gc.dt);
         }
 
-        animation_update(gc.dt);
-
-        vec2f_t res = animation_get((u64)&test_animation.x);
-        if(res.x != 0.0f && res.y != 0.0f){
-            test_animation.x = res.x;
-            test_animation.y = res.y;
-        }
-
-        draw_rect_scissored(&gc.draw_buffer, test_animation.x, test_animation.y,
-                            test_animation.w, test_animation.h, COLOR_YELLOW);   
+        animation_get((u64)&test_animation.x, &test_animation.x, &test_animation.y);
+        draw_line(&gc.draw_buffer, test_animation.x, test_animation.y, new_x, new_y, HEX_TO_COLOR4(0x50fa7b));
+        draw_rect_scissored(&gc.draw_buffer, (i32)test_animation.x, (i32)test_animation.y,
+                            (u32)test_animation.w, (u32)test_animation.h, COLOR_YELLOW); 
+        
     }
     #endif
 
-    PROFILE("Rendering : Text")
+    #if 1
+        u32 scale = 2;
+        u32 pos = gc.screen_width-20*gc.font->font_char_width*scale;
+
+        rendered_text_t text = {
+            .font = gc.font,
+            .pos = {.x=pos, .y=0},
+            .color = {.r = 255, .g = 255, .b = 255, .a=255},
+            .scale = scale,
+            .string = frametime
+        };
+        
+        snprintf(frametime, BUFFER_SIZE, "%.2f ms", gc.average_frame_time*1000);
+        render_n_string_abs(&gc.draw_buffer, &text);
+    #endif
+
+    if(gc.profile)
     {
-        #if 1
-            u32 scale = 2;
-            u32 pos = gc.screen_width-20*gc.font->font_char_width*scale;
-
-            rendered_text_t text = {
-                .font = gc.font,
-                .pos = {.x=pos, .y=0},
-                .color = {.r = 255, .g = 255, .b = 255, .a=255},
-                .scale = scale,
-                .string = frametime
-            };
-            
-            sprintf(frametime,"%.2f ms", gc.dt*1000);
-            render_n_string_abs(&gc.draw_buffer, &text);
-        #endif
-
-        if(gc.profile)
-        {
-            render_prof_entries();
-        }
+        render_prof_entries();
     }
+
     prof_buf_count = 0;
     
     if(gc.capture)
@@ -1333,7 +1518,6 @@ void init_scene(void)
     };
     scene_array_add(gc.scene_objects, (scene_object_t){.type=Sphere, .object=&large_sphere_3});
 }
-
 void *create_window(u32 width, u32 height, char *title)
 {
     if (!glfwInit()) {
@@ -1346,14 +1530,16 @@ void *create_window(u32 width, u32 height, char *title)
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
     glfwWindowHint(GLFW_SAMPLES, 8); // Enable multisampling for smoother edges
-
     
-    GLFWwindow *window = CHECK_PTR(glfwCreateWindow((int)gc.screen_width, (int)gc.screen_height,
-                                                    title, NULL, NULL));
-
+    
+    GLFWwindow *window = CHECK_PTR(glfwCreateWindow((int)width, (int)height,
+    title, NULL, NULL));
+    
     glfwMakeContextCurrent(window);
 
-    glViewport(0, 0, (int)gc.screen_width, (int)gc.screen_height);
+    glfwSwapInterval(1);
+    
+    glViewport(0, 0, (int)width, (int)height);
     
     glfwSetKeyCallback(window, keyCallback);
     glfwSetCharCallback(window, charCallback);
@@ -1373,7 +1559,6 @@ void *create_window(u32 width, u32 height, char *title)
 
     glEnable(GL_BLEND);
 
-    glfwSwapInterval(1);
     
     printf("OpenGL Version: %s\n", glGetString(GL_VERSION));
     printf("GLSL Version: %s\n", glGetString(GL_SHADING_LANGUAGE_VERSION));
@@ -1384,7 +1569,7 @@ void *create_window(u32 width, u32 height, char *title)
 bool init_all(void)
 {
     f32 aspect_ratio = 16.0f / 9.0f;
-    u32 window_width = 1000;
+    u32 window_width = 1100;
 
     init_camera(window_width, aspect_ratio);
     init_scene();
@@ -1418,6 +1603,12 @@ bool init_all(void)
 
     get_time(&gc.last_frame_start);
 
+    for (int i = 0; i < FRAME_HISTORY_SIZE; i++) {
+        gc.frame_history[i] = 1.0 / 60.0; 
+    }
+    gc.frame_idx = 0;
+    gc.current_fps = 60.0;
+
     set_dark_mode(gc.window);
 
     return true;
@@ -1429,24 +1620,45 @@ int main(void)
 
     while(!glfwWindowShouldClose((GLFWwindow*)gc.window))
     {
-        poll_events();
-
-        gc.dt = get_time_difference(&gc.last_frame_start);
-        
-        PROFILE("Rendering all")
+        PROFILE("Average Frame rate calculation")
         {
-            render_all();
+            gc.dt = get_time_difference(&gc.last_frame_start);
+
+            gc.frame_history[gc.frame_idx] = gc.dt;
+            gc.frame_idx = (gc.frame_idx + 1) % FRAME_HISTORY_SIZE;
+            
+            // Calculate average frame time
+            f64 totalTime = 0.0;
+            for (int i = 0; i < FRAME_HISTORY_SIZE; i++) {
+                totalTime += gc.frame_history[i];
+            }
+            gc.average_frame_time = totalTime / FRAME_HISTORY_SIZE;
+            gc.current_fps = (gc.average_frame_time > 0.0) ? (1.0 / gc.average_frame_time) : 0.0;
+        }
+
+        poll_events();
+        
+        animation_update(gc.dt);
+
+        // PROFILE("Rendering all single threaded")
+        // {
+        //     render_all();
+        // }
+
+        // present_frame(&gc.draw_buffer);
+
+        PROFILE("Rendering all multithreaded")
+        {
+            render_all_parallel();
         }
 
         present_frame(&gc.draw_buffer);
 
-        PROFILE("Reseting the arena")
-        {
-            arena_reset(gc.frame_arena);
-        }
+        arena_reset(gc.frame_arena);
 
         prof_sort_results();
         prof_record_results();
+        prof_print_results();
         prof_reset();
     }
     return 0;

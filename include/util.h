@@ -34,6 +34,38 @@ do{\
         fprintf(stderr, "%s:%d:%s(): " fmt, __FILE__, __LINE__, __func__ __VA_OPT__(,) __VA_ARGS__);\
 }while(0)
 
+#define FOREACH(item, array)                                 \
+    for (int _keep = 1,                                      \
+             _count = 0,                                     \
+             _size = sizeof(array) / sizeof *(array);        \
+         _keep && _count != _size;                           \
+         _keep = !_keep, _count++)                           \
+        for (item = (array) + _count; _keep; _keep = !_keep)
+
+#define NUM_ELEMS(x) ((sizeof(x))/(sizeof((x)[0])))
+
+#define SET(A, n, v)                               \
+    do{                                            \
+        size_t i_, n_;                             \
+        for (n_ = (n), i_ = 0; n_ > 0; --n_, ++i_) \
+            (A)[i_] = (v);                         \
+    } while (0)
+
+#define SWAP(x, y, T) \
+    do{               \
+        T tmp = (x);  \
+        (x) = (y);    \
+        (y) = tmp;    \
+    } while (0)
+
+#define COMPARE_FLOATS(a,b,epsilon) (fabs(a - b) <= epsilon * fabs(a))
+/* Conditionally set or clear bits  if (f) is true ->  w |= m; else w &= ~m;*/
+#define MASK(w,m,f) (w ^= (-f ^ w) & m)
+/* Compute the sign of an integer, +ve -> 1 , -ve -> -1 , zero -> 0*/
+#define SIGN(v) ((v) > 0) - ((v) < 0)
+/* Compute Integer absolute value */
+#define ABS(v) ((v < 0) ? -(unsigned)v : v)
+
 #define KB(n)         (((u64)(n)) << 10)
 #define MB(n)         (((u64)(n)) << 20)
 #define GB(n)         (((u64)(n)) << 30)
@@ -44,6 +76,30 @@ do{\
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
+
+#define MAX3(a,b,c)     ((a) > (b) ? ((a) > (c) ? (a) : (c)) : ((b) > (c) ? (b) : (c)))
+#define MIN3(a,b,c)     ((a) < (b) ? ((a) < (c) ? (a) : (c)) : ((b) < (c) ? (b) : (c)))
+
+#define CEIL_DIV(x, y) (((x) + (y) - 1) / (y))
+#define ALIGN_UP(x, y) ((((x) + (y) - 1) / (y)) * (y))
+
+#define FPS(n)          (1000/n)
+
+#define RANGE_CONVERT(value, from_min, from_max, to_min, to_max) \
+    (((value) - (from_min)) * ((to_max) - (to_min)) / ((from_max) - (from_min)) + (to_min))
+
+#define FRAND_MAX                 32767  
+
+#define RAND_FLOAT()              (f32)fast_rand() / ((f32)FRAND_MAX + 1.0f)
+#define RAND_FLOAT_RANGE(min,max) (min + (max-min) * (RAND_FLOAT()))
+
+/*
+    - start = starting value
+    - end = ending value
+    - t = progress from 0.0 to 1.0 (0% to 100%) 
+ */
+#define LERP_F32(start, end, t) ((f32)((start) + ((end) - (start)) * (t)))
+#define LERP_F64(start, end, t) ((f64)((start) + ((end) - (start)) * (t)))
 
 #define ClampTop(A,X) MIN(A,X)
 #define ClampBot(X,B) MAX(X,B)
@@ -64,7 +120,6 @@ do{\
 #define Extract8(word, pos)   (((word) >> ((pos)*8))  & max_u8)
 #define Extract16(word, pos)  (((word) >> ((pos)*16)) & max_u16)
 #define Extract32(word, pos)  (((word) >> ((pos)*32)) & max_u32)
-
 
 #define abs_s64(v) (u64)llabs(v)
 
@@ -105,18 +160,6 @@ do{\
 #define tan_f64(v)    tan(radians_from_turns_f64(v))
 
 
-#define MAX3(a,b,c)     ((a) > (b) ? ((a) > (c) ? (a) : (c)) : ((b) > (c) ? (b) : (c)))
-#define MIN3(a,b,c)     ((a) < (b) ? ((a) < (c) ? (a) : (c)) : ((b) < (c) ? (b) : (c)))
-
-#define FPS(n)          (1000/n)
-
-#define RANGE_CONVERT(value, from_min, from_max, to_min, to_max) \
-    (((value) - (from_min)) * ((to_max) - (to_min)) / ((from_max) - (from_min)) + (to_min))
-
-#define FRAND_MAX                 32767  
-
-#define RAND_FLOAT()              (f32)fast_rand() / ((f32)FRAND_MAX + 1.0f)
-#define RAND_FLOAT_RANGE(min,max) (min + (max-min) * (RAND_FLOAT()))
 
 typedef uint8_t  u8;
 typedef int8_t   i8;
@@ -260,7 +303,7 @@ mat4x4_t mat_rotate_xy(f32 angle);
 mat4x4_t mat_rotate_yz(f32 angle);
 mat4x4_t mat_rotate_zx(f32 angle);
 
-f32 get_time_difference(void *last_time);
+f64 get_time_difference(void *last_time);
 void get_time(void *time);
 
 

@@ -151,9 +151,9 @@ vec3f_t vec3f_normalize(vec3f_t v)
 }
 
 // returns an linearly interpolated vector based on blend factor 0.0 -> 1.0
-vec3f_t vec3f_lerp(vec3f_t a, vec3f_t b, float blend_factor)
+vec3f_t vec3f_lerp(vec3f_t a, vec3f_t b, f32 blend_factor)
 {
-    return vec3f_add(vec3f_scale(a,(1.0-blend_factor)), vec3f_scale(b,blend_factor));
+    return vec3f_add(vec3f_scale(a,(1.0f-blend_factor)), vec3f_scale(b,blend_factor));
 }
 
 vec3f_t vec3f_random()
@@ -161,7 +161,7 @@ vec3f_t vec3f_random()
     return (vec3f_t){RAND_FLOAT(),RAND_FLOAT(),RAND_FLOAT()};
 }
 
-vec3f_t vec3f_random_range(float min, float max)
+vec3f_t vec3f_random_range(f32 min, f32 max)
 {
     return (vec3f_t){RAND_FLOAT_RANGE(min, max),RAND_FLOAT_RANGE(min, max),RAND_FLOAT_RANGE(min, max)};
 }
@@ -210,9 +210,10 @@ vec3f_t vec3f_reflect(vec3f_t v, vec3f_t n)
     return vec3f_sub(v, vec3f_scale(n, 2.0f*vec3f_dot(v, n)));
 }
 
+// Snell lay
 vec3f_t vec3f_refract(vec3f_t v, vec3f_t n, float e)
 {
-    float cos_theta = fmin(vec3f_dot(vec3f_scale(v, -1.0f), n), 1.0f);
+    float cos_theta = fmin(vec3f_dot(vec3f_scale(v, -1.0f), n), 1.0f);              // incident angle
     vec3f_t r_out_perp = vec3f_scale(vec3f_add(v, vec3f_scale(n, cos_theta)), e);
     vec3f_t r_out_parallel = vec3f_scale(n, -1.0f*sqrt_f32(abs_f32(1.0f-vec3f_length_sq(r_out_perp))));
     return vec3f_add(r_out_perp, r_out_parallel);
@@ -444,16 +445,16 @@ float cosine(int x){
     return sine(90-x);
 }
 
-f32 get_time_difference(void *last_time) 
+f64 get_time_difference(void *last_time) 
 {
-    f32 dt = 0.0f;
+    f64 dt = 0.0;
 
 #ifdef _WIN32
-    LARGE_INTEGER now, frequency;
-    QueryPerformanceFrequency(&frequency);
+    LARGE_INTEGER now, f;
+    QueryPerformanceFrequency(&f);
     QueryPerformanceCounter(&now);
     LARGE_INTEGER *last_time_win = (LARGE_INTEGER *)last_time;
-    dt = (f32)(now.QuadPart - last_time_win->QuadPart) / (f32)frequency.QuadPart;
+    dt = (f64)(now.QuadPart - last_time_win->QuadPart) / (f64)f.QuadPart;
     *last_time_win = now;
 #else
     struct timespec now;
