@@ -9,15 +9,16 @@
 #endif
 
 #include <stdio.h>
-#include <assert.h>
-#include <stdbool.h>
 #include <stdlib.h>
-#include <stddef.h>
-#include <stdint.h>
 #include <string.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
+#include <locale.h>
+#include <assert.h>
+#include <math.h>
 #include <time.h>
 #include <float.h>
-#include <math.h>
 
 #include <immintrin.h> 
 
@@ -28,11 +29,13 @@
 #define M_PI                        3.14159265358979323846
 #define M_PI_2                      1.57079632679489661923
 
+#define NUM_ELEMS(x) ((sizeof(x))/(sizeof((x)[0])))
+
 #define DEBUG_PRT(fmt, ...)\
-do{\
-    if(DEBUG)\
-        fprintf(stderr, "%s:%d:%s(): " fmt, __FILE__, __LINE__, __func__ __VA_OPT__(,) __VA_ARGS__);\
-}while(0)
+    do{\
+        if(DEBUG)\
+            fprintf(stderr, "%s:%d:%s(): " fmt, __FILE__, __LINE__, __func__ __VA_OPT__(,) __VA_ARGS__);\
+    }while(0)
 
 #define FOREACH(item, array)                                 \
     for (int _keep = 1,                                      \
@@ -42,7 +45,6 @@ do{\
          _keep = !_keep, _count++)                           \
         for (item = (array) + _count; _keep; _keep = !_keep)
 
-#define NUM_ELEMS(x) ((sizeof(x))/(sizeof((x)[0])))
 
 #define SET(A, n, v)                               \
     do{                                            \
@@ -59,29 +61,27 @@ do{\
     } while (0)
 
 #define COMPARE_FLOATS(a,b,epsilon) (fabs(a - b) <= epsilon * fabs(a))
-/* Conditionally set or clear bits  if (f) is true ->  w |= m; else w &= ~m;*/
-#define MASK(w,m,f) (w ^= (-f ^ w) & m)
-/* Compute the sign of an integer, +ve -> 1 , -ve -> -1 , zero -> 0*/
-#define SIGN(v) ((v) > 0) - ((v) < 0)
-/* Compute Integer absolute value */
-#define ABS(v) ((v < 0) ? -(unsigned)v : v)
 
-#define KB(n)         (((u64)(n)) << 10)
-#define MB(n)         (((u64)(n)) << 20)
-#define GB(n)         (((u64)(n)) << 30)
-#define TB(n)         (((u64)(n)) << 40)
-#define Thousand(n)   ((n)*1000)
-#define Million(n)    ((n)*1000000)
-#define Billion(n)    ((n)*1000000000)
+#define MASK(w,m,f)     (w ^= (-f ^ w) & m)            // Conditionally set or clear bits  if (f) is true ->  w |= m; else w &= ~m;
+#define SIGN(v)         ((v) > 0) - ((v) < 0)
+#define ABS(v)          ((v < 0) ? -(unsigned)v : v)
 
-#define MAX(a, b) ((a) > (b) ? (a) : (b))
-#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define KB(n)           (((u64)(n)) << 10)
+#define MB(n)           (((u64)(n)) << 20)
+#define GB(n)           (((u64)(n)) << 30)
+#define TB(n)           (((u64)(n)) << 40)
+#define Thousand(n)     ((n)*1000)
+#define Million(n)      ((n)*1000000)
+#define Billion(n)      ((n)*1000000000)
+
+#define MAX(a, b)       ((a) > (b) ? (a) : (b))
+#define MIN(a, b)       ((a) < (b) ? (a) : (b))
 
 #define MAX3(a,b,c)     ((a) > (b) ? ((a) > (c) ? (a) : (c)) : ((b) > (c) ? (b) : (c)))
 #define MIN3(a,b,c)     ((a) < (b) ? ((a) < (c) ? (a) : (c)) : ((b) < (c) ? (b) : (c)))
 
-#define CEIL_DIV(x, y) (((x) + (y) - 1) / (y))
-#define ALIGN_UP(x, y) ((((x) + (y) - 1) / (y)) * (y))
+#define CEIL_DIV(x, y)  (((x) + (y) - 1) / (y))
+#define ALIGN_UP(x, y)  ((((x) + (y) - 1) / (y)) * (y))
 
 #define FPS(n)          (1000/n)
 
@@ -98,88 +98,99 @@ do{\
     - end = ending value
     - t = progress from 0.0 to 1.0 (0% to 100%) 
  */
-#define LERP_F32(start, end, t) ((f32)((start) + ((end) - (start)) * (t)))
-#define LERP_F64(start, end, t) ((f64)((start) + ((end) - (start)) * (t)))
+#define LERP_F32(start, end, t)     ((f32)((start) + ((end) - (start)) * (t)))
+#define LERP_F64(start, end, t)     ((f64)((start) + ((end) - (start)) * (t)))
 
-#define ClampTop(A,X) MIN(A,X)
-#define ClampBot(X,B) MAX(X,B)
-#define Clamp(A,X,B) (((X)<(A))?(A):((X)>(B))?(B):(X))
+#define ClampTop(A,X)               MIN(A,X)
+#define ClampBot(X,B)               MAX(X,B)
+#define Clamp(A,X,B)                (((X)<(A))?(A):((X)>(B))?(B):(X))
 
-#define Contains(x,min,max)  (min <= x && x <= max)
-#define Surrounds(x,min,max) (min < x && x < max)
+#define Contains(x,min,max)         (min <= x && x <= max)
+#define Surrounds(x,min,max)        (min < x && x < max)
 
-#define Compose64Bit(a,b)  ((((u64)a) << 32) | ((u64)b))
-#define Compose32Bit(a,b)  ((((u32)a) << 16) | ((u32)b))
-#define AlignPow2(x,b)     (((x) + (b) - 1)&(~((b) - 1)))
-#define AlignDownPow2(x,b) ((x)&(~((b) - 1)))
-#define AlignPadPow2(x,b)  ((0-(x)) & ((b) - 1))
-#define IsPow2(x)          ((x)!=0 && ((x)&((x)-1))==0)
-#define IsPow2OrZero(x)    ((((x) - 1)&(x)) == 0)
+#define Compose64Bit(a,b)           ((((u64)a) << 32) | ((u64)b))
+#define Compose32Bit(a,b)           ((((u32)a) << 16) | ((u32)b))
+#define AlignPow2(x,b)              (((x) + (b) - 1)&(~((b) - 1)))
+#define AlignDownPow2(x,b)          ((x)&(~((b) - 1)))
+#define AlignPadPow2(x,b)           ((0-(x)) & ((b) - 1))
+#define IsPow2(x)                   ((x)!=0 && ((x)&((x)-1))==0)
+#define IsPow2OrZero(x)             ((((x) - 1)&(x)) == 0)
 
-#define ExtractBit(word, idx) (((word) >> (idx)) & 1)
-#define Extract8(word, pos)   (((word) >> ((pos)*8))  & max_u8)
-#define Extract16(word, pos)  (((word) >> ((pos)*16)) & max_u16)
-#define Extract32(word, pos)  (((word) >> ((pos)*32)) & max_u32)
+#define ExtractBit(word, idx)       (((word) >> (idx)) & 1)
+#define Extract8(word, pos)         (((word) >> ((pos)*8))  & max_u8)
+#define Extract16(word, pos)        (((word) >> ((pos)*16)) & max_u16)
+#define Extract32(word, pos)        (((word) >> ((pos)*32)) & max_u32)
 
-#define abs_s64(v) (u64)llabs(v)
+#define abs_s64(v)                  (u64)llabs(v)
 
-#define sqrt_f32(v)   sqrtf(v)
-#define cbrt_f32(v)   cbrtf(v)
-#define mod_f32(a, b) fmodf((a), (b))
-#define pow_f32(b, e) powf((b), (e))
-#define ceil_f32(v)   ceilf(v)
-#define floor_f32(v)  floorf(v)
-#define round_f32(v)  roundf(v)
-#define abs_f32(v)    fabsf(v)
-#define radians_from_turns_f32(v) ((v)*(2*3.1415926535897f))
-#define turns_from_radians_f32(v) ((v)/(2*3.1415926535897f))
-#define degrees_from_turns_f32(v) ((v)*360.f)
-#define turns_from_degrees_f32(v) ((v)/360.f)
+#define sqrt_f32(v)                 sqrtf(v)
+#define cbrt_f32(v)                 cbrtf(v)
+#define mod_f32(a, b)               fmodf((a), (b))
+#define pow_f32(b, e)               powf((b), (e))
+#define ceil_f32(v)                 ceilf(v)
+#define floor_f32(v)                floorf(v)
+#define round_f32(v)                roundf(v)
+#define abs_f32(v)                  fabsf(v)
+#define radians_from_turns_f32(v)   ((v)*(2*3.1415926535897f))
+#define turns_from_radians_f32(v)   ((v)/(2*3.1415926535897f))
+#define degrees_from_turns_f32(v)   ((v)*360.f)
+#define turns_from_degrees_f32(v)   ((v)/360.f)
 #define degrees_from_radians_f32(v) (degrees_from_turns_f32(turns_from_radians_f32(v)))
 #define radians_from_degrees_f32(v) (radians_from_turns_f32(turns_from_degrees_f32(v)))
-#define sin_f32(v)    sinf(radians_from_turns_f32(v))
-#define cos_f32(v)    cosf(radians_from_turns_f32(v))
-#define tan_f32(v)    tanf(radians_from_turns_f32(v))
+#define sin_f32(v)                  sinf(radians_from_turns_f32(v))
+#define cos_f32(v)                  cosf(radians_from_turns_f32(v))
+#define tan_f32(v)                  tanf(radians_from_turns_f32(v))
 
-#define sqrt_f64(v)   sqrt(v)
-#define cbrt_f64(v)   cbrt(v)
-#define mod_f64(a, b) fmod((a), (b))
-#define pow_f64(b, e) pow((b), (e))
-#define ceil_f64(v)   ceil(v)
-#define floor_f64(v)  floor(v)
-#define round_f64(v)  round(v)
-#define abs_f64(v)    fabs(v)
-#define radians_from_turns_f64(v) ((v)*(2*3.1415926535897))
-#define turns_from_radians_f64(v) ((v)/(2*3.1415926535897))
-#define degrees_from_turns_f64(v) ((v)*360.0)
-#define turns_from_degrees_f64(v) ((v)/360.0)
+#define sqrt_f64(v)                 sqrt(v)
+#define cbrt_f64(v)                 cbrt(v)
+#define mod_f64(a, b)               fmod((a), (b))
+#define pow_f64(b, e)               pow((b), (e))
+#define ceil_f64(v)                 ceil(v)
+#define floor_f64(v)                floor(v)
+#define round_f64(v)                round(v)
+#define abs_f64(v)                  fabs(v)
+#define radians_from_turns_f64(v)   ((v)*(2*3.1415926535897))
+#define turns_from_radians_f64(v)   ((v)/(2*3.1415926535897))
+#define degrees_from_turns_f64(v)   ((v)*360.0)
+#define turns_from_degrees_f64(v)   ((v)/360.0)
 #define degrees_from_radians_f64(v) (degrees_from_turns_f64(turns_from_radians_f64(v)))
 #define radians_from_degrees_f64(v) (radians_from_turns_f64(turns_from_degrees_f64(v)))
-#define sin_f64(v)    sin(radians_from_turns_f64(v))
-#define cos_f64(v)    cos(radians_from_turns_f64(v))
-#define tan_f64(v)    tan(radians_from_turns_f64(v))
+#define sin_f64(v)                  sin(radians_from_turns_f64(v))
+#define cos_f64(v)                  cos(radians_from_turns_f64(v))
+#define tan_f64(v)                  tan(radians_from_turns_f64(v))
 
+typedef uint8_t     u8;
+typedef int8_t      i8;
 
+typedef uint16_t    u16;
+typedef int16_t     i16;
 
-typedef uint8_t  u8;
-typedef int8_t   i8;
+typedef uint32_t    u32;
+typedef int32_t     i32;
 
-typedef uint16_t  u16;
-typedef int16_t   i16;
+typedef uint64_t    u64;
+typedef int64_t     i64;
 
-typedef uint32_t u32;
-typedef int32_t  i32;
-
-typedef uint64_t u64;
-typedef int64_t  i64;
-
-typedef float    f32;
-typedef double   f64;
+typedef float       f32;
+typedef double      f64;
 
 #define fn                  static
 #define internal            static
 #define local_persist       static
 #define global_variable     static
+
+#ifdef _WIN32
+    typedef HANDLE thread_handle_t;
+    typedef DWORD (WINAPI *thread_func_t)(LPVOID);
+    typedef LPVOID thread_func_param_t;
+    typedef DWORD WINAPI thread_func_ret_t;
+#else
+    #include <pthread.h>
+    typedef pthread_t thread_handle_t;
+    typedef void* (*thread_func_t)(void*);
+    typedef void* thread_func_param_t;
+    typedef void* thread_func_ret_t;
+#endif
 
 global_variable u32 sign32     = 0x80000000;
 global_variable u32 exponent32 = 0x7F800000;
@@ -265,8 +276,6 @@ void swap(int* a, int* b);
 inline void fast_srand(int seed);
 inline int fast_rand(void);
 
-// ssize_t getdelim(char **buf, size_t *bufsiz, int delimiter, FILE *fp);
-// ssize_t getline(char **buf, size_t *bufsiz, FILE *fp);
 
 vec2f_t vec2f(float x, float y);
 vec2f_t vec2f_add(vec2f_t a, vec2f_t b);
@@ -305,8 +314,6 @@ mat4x4_t mat_rotate_zx(f32 angle);
 
 f64 get_time_difference(void *last_time);
 void get_time(void *time);
-
-
 
 #define LOG_ERROR(error_code)   log_error(error_code, __FILE__, __LINE__)
 #define CHECK_PTR(ptr)          check_ptr(ptr, __FILE__, __LINE__)

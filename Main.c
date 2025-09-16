@@ -13,20 +13,7 @@
 #include "./include/arena.h"
 #include "./include/base_graphics.h"
 
-#ifdef _WIN32
-    typedef HANDLE thread_handle_t;
-    typedef DWORD (WINAPI *thread_func_t)(LPVOID);
-    #define THREAD_FUNC_RETURN DWORD WINAPI
-    #define THREAD_FUNC_PARAM  LPVOID
-#else
-    #include <pthread.h>
-    typedef pthread_t thread_handle_t;
-    typedef void* (*thread_func_t)(void*);
-    #define THREAD_FUNC_RETURN void*
-    #define THREAD_FUNC_PARAM void*
-#endif
-
-thread_handle_t create_thread(thread_func_t func, void* data)
+thread_handle_t create_thread(thread_func_t func, thread_func_param_t data)
 {
     #ifdef _WIN32
         return CreateThread(NULL,  // security attribute -no idea- NULL means default 
@@ -665,6 +652,7 @@ bool ray_scatter(ray_t *ray_in, hit_record_t *hit_info, vec3f_t *attenuation, ra
             return true;
 
         case Emissive:
+            break;
         default:
             break;
     }
@@ -1172,7 +1160,7 @@ typedef struct {
 } tile_data_t;
 
 
-THREAD_FUNC_RETURN render_tile(THREAD_FUNC_PARAM data) 
+thread_func_ret_t render_tile(thread_func_param_t data) 
 {
     tile_data_t *tile = (tile_data_t *)data;
 
@@ -1206,8 +1194,8 @@ void render_all_parallel(void)
     gc.draw_buffer.height = gc.screen_height;
     gc.draw_buffer.width  = gc.screen_width;
 
-    u32 height       = gc.draw_buffer.height;
-    u32 width        = gc.draw_buffer.width;
+    u32 height  = gc.draw_buffer.height;
+    u32 width   = gc.draw_buffer.width;
 
     gc.draw_buffer.pixels = ARENA_ALLOC(gc.frame_arena, height * width * sizeof(color4_t));
 
@@ -1220,8 +1208,8 @@ void render_all_parallel(void)
     u32 tiles_y = CEIL_DIV(height, tile_size);
     u32 total_tiles = tiles_x * tiles_y;
 
-    tile_data_t* tiles = malloc(total_tiles * sizeof(tile_data_t));
-    thread_handle_t* threads = malloc(num_threads * sizeof(thread_handle_t));
+    tile_data_t* tiles = ARENA_ALLOC(gc.frame_arena, total_tiles * sizeof(tile_data_t));
+    thread_handle_t* threads = ARENA_ALLOC(gc.frame_arena, num_threads * sizeof(thread_handle_t));
 
     u32 tile_idx = 0;
     
@@ -1247,15 +1235,22 @@ void render_all_parallel(void)
                 join_thread(threads[thread_slot]);
             }
             
-            threads[thread_slot] = create_thread(render_tile, &tiles[tile_idx]);
+            PROFILE("Actually creating a thread, does it matter ?")
+            {
+                threads[thread_slot] = create_thread(render_tile, &tiles[tile_idx]);
+            }
             
             tile_idx++;
         }
     }
+
     int remaining_threads = (total_tiles < num_threads) ? total_tiles : num_threads;
 
-    for (int i = 0; i < remaining_threads; i++) {
-        join_thread(threads[i]);
+    PROFILE("Waiting to join")
+    {
+        for (int i = 0; i < remaining_threads; i++) {
+            join_thread(threads[i]);
+        }
     }
 
     u32 scale = 2;
@@ -1284,9 +1279,6 @@ void render_all_parallel(void)
         export_image(&gc.draw_buffer, "capture.tga");
         gc.capture = false;
     }
-
-    free(tiles);
-    free(threads);
 }
 
 void render_all(void)
@@ -1301,7 +1293,7 @@ void render_all(void)
     
     clear_screen(&gc.draw_buffer, HEX_TO_COLOR4(0x282a36));
     
-    #if 1    
+    #if 1   
         vec3f_t color;
 
         for (u32 y = 0; y < height; ++y)
@@ -1338,14 +1330,20 @@ void render_all(void)
                                 test_animation.x, test_animation.y,
                                 (f32)new_x, (f32)new_y, 1.0f,
                                 EASE_IN_OUT_QUAD);
+            animation_start((u64)&test_animation.y, 
+                                255.0f, 255.0f,
+                                (f32)0.0f, (f32)155.0f, 1.0f,
+                                EASE_IN_OUT_QUAD);
             test_animation_move = false;
             animation_update(gc.dt);
         }
-
+        static f32 col_r = 0.0f;
+        static f32 col_g = 0.0f;
         animation_get((u64)&test_animation.x, &test_animation.x, &test_animation.y);
+        animation_get((u64)&test_animation.y, &col_r, &col_g);
         draw_line(&gc.draw_buffer, test_animation.x, test_animation.y, new_x, new_y, HEX_TO_COLOR4(0x50fa7b));
         draw_rect_scissored(&gc.draw_buffer, (i32)test_animation.x, (i32)test_animation.y,
-                            (u32)test_animation.w, (u32)test_animation.h, COLOR_YELLOW); 
+                            (u32)test_animation.w, (u32)test_animation.h, (color4_t){(u8)col_r, (u8)col_g, 0, 255}); 
         
     }
     #endif
@@ -1531,9 +1529,7 @@ void *create_window(u32 width, u32 height, char *title)
     glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
     glfwWindowHint(GLFW_SAMPLES, 8); // Enable multisampling for smoother edges
     
-    
-    GLFWwindow *window = CHECK_PTR(glfwCreateWindow((int)width, (int)height,
-    title, NULL, NULL));
+    GLFWwindow *window = CHECK_PTR(glfwCreateWindow((int)width, (int)height, title, NULL, NULL));
     
     glfwMakeContextCurrent(window);
 
@@ -1558,7 +1554,6 @@ void *create_window(u32 width, u32 height, char *title)
     }
 
     glEnable(GL_BLEND);
-
     
     printf("OpenGL Version: %s\n", glGetString(GL_VERSION));
     printf("GLSL Version: %s\n", glGetString(GL_SHADING_LANGUAGE_VERSION));
@@ -1620,21 +1615,18 @@ int main(void)
 
     while(!glfwWindowShouldClose((GLFWwindow*)gc.window))
     {
-        PROFILE("Average Frame rate calculation")
-        {
-            gc.dt = get_time_difference(&gc.last_frame_start);
+        gc.dt = get_time_difference(&gc.last_frame_start);
 
-            gc.frame_history[gc.frame_idx] = gc.dt;
-            gc.frame_idx = (gc.frame_idx + 1) % FRAME_HISTORY_SIZE;
-            
-            // Calculate average frame time
-            f64 totalTime = 0.0;
-            for (int i = 0; i < FRAME_HISTORY_SIZE; i++) {
-                totalTime += gc.frame_history[i];
-            }
-            gc.average_frame_time = totalTime / FRAME_HISTORY_SIZE;
-            gc.current_fps = (gc.average_frame_time > 0.0) ? (1.0 / gc.average_frame_time) : 0.0;
+        gc.frame_history[gc.frame_idx] = gc.dt;
+        gc.frame_idx = (gc.frame_idx + 1) % FRAME_HISTORY_SIZE;
+        
+        // Calculate average frame time
+        f64 totalTime = 0.0;
+        for (int i = 0; i < FRAME_HISTORY_SIZE; i++) {
+            totalTime += gc.frame_history[i];
         }
+        gc.average_frame_time = totalTime / FRAME_HISTORY_SIZE;
+        gc.current_fps = (gc.average_frame_time > 0.0) ? (1.0 / gc.average_frame_time) : 0.0;
 
         poll_events();
         
@@ -1644,8 +1636,6 @@ int main(void)
         // {
         //     render_all();
         // }
-
-        // present_frame(&gc.draw_buffer);
 
         PROFILE("Rendering all multithreaded")
         {

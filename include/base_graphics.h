@@ -44,14 +44,13 @@ typedef struct scissor_region_t
     bool enabled;
 }scissor_region_t;
 
-
 #define RGBA_TO_U32(r, g, b, a)  ((unsigned)(r) | ((unsigned)(g) << 8) | ((unsigned)(b) << 16) | ((unsigned)(a) << 24))
 #define HEX_TO_COLOR4(hex) (color4_t){((hex >> 16) & 0xFF), ((hex >> 8) & 0xFF), (hex & 0xFF), 255}   
 #define HEX_TO_RGBA(s,hex)  \
-s.r = ((hex >> 16) & 0xFF); \
-s.g = ((hex >> 8) & 0xFF);  \
-s.b = (hex & 0xFF);         \
-s.a = 255     
+    s.r = ((hex >> 16) & 0xFF); \
+    s.g = ((hex >> 8) & 0xFF);  \
+    s.b = (hex & 0xFF);         \
+    s.a = 255     
 
 #define COLOR_RED           (color4_t){255, 0, 0, 255}
 #define COLOR_GREEN         (color4_t){0, 255, 0, 255}
@@ -73,7 +72,6 @@ s.a = 255
 #define COLOR_TEAL          (color4_t){0, 128, 128, 255}
 #define COLOR_MAROON        (color4_t){128, 0, 0, 255}
 #define COLOR_OLIVE         (color4_t){128, 128, 0, 255}
-
 
 #define MAX_SCISSOR_STACK 16
 
@@ -117,7 +115,6 @@ void render_glyph_to_buffer(rendered_text_t *text, u32 glyph_idx,
                                u32 dst_x, u32 dst_y);
 void render_n_string_abs(image_view_t const *color_buf, rendered_text_t *text);
 font_t* init_font(u32 *font_pixels);
-
 
 bool inside_rect(i32 x, i32 y, rect_t *s);
 rect_t intersect_rects(const rect_t *a, const rect_t *b);

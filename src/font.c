@@ -1,62 +1,49 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
+#include "util.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
 #include <string.h>
 #include <math.h>
 
-#define ATLAS_WIDTH 1024
-#define ATLAS_HEIGHT 1024
-#define ASCII_LOW 32
-#define ASCII_HIGH 126
-#define GLYPH_COUNT (ASCII_HIGH - ASCII_LOW + 1)
-
-typedef struct {
-    u32 x, y, w, h;        // Position and size in atlas
-    float advance;         // Horizontal advance
-    int bearing_x, bearing_y;  // Bearing offsets
+typedef struct 
+{
+    u32 x, y, w, h;            
+    i32 bearing_x, bearing_y;
+    f32 advance;
+    u8 *bitmap;
 } glyph_info_t;
 
-typedef struct {
+typedef struct 
+{
     stbtt_fontinfo info;
     u8 *font_buffer;
-    float font_size;
-    float scale;
-    int ascent, descent, line_gap;
+    f32 scale;
+    i32 ascent, descent, line_gap;
     
-    // Atlas texture data
-    u8 *atlas;             // Grayscale atlas bitmap
-    u32 atlas_width, atlas_height;
-    
-    // Glyph lookup table
-    glyph_info_t glyphs[GLYPH_COUNT];
-    
-    // Atlas packing state
-    u32 pack_x, pack_y, row_height;
-} font_t;
+    glyph_info_t glyph_cache[GLYPH_CACHE_SIZE];
+    u8 cache_valid[GLYPH_CACHE_SIZE];
+} font_tt;
 
-typedef struct {
-    font_t *font;
+typedef struct 
+{
+    font_tt *font;
     char *string;
     vec2_t pos;
-    float scale;
     color4_t color;
-} rendered_text_t;
+} rendered_text_tt;
 
-// Initialize font and bake atlas
-font_t* init_font(u8 *font_buffer, float font_size)
+// Initialize font from memory buffer
+font_tt* init_font_tt(u8 *font_buffer, f32 font_size)
 {
-    font_t *font = malloc(sizeof(font_t));
-    if (!font) return NULL;
+    font_tt *font = CHECK_PTR(malloc(sizeof(font_tt)));
     
-    memset(font, 0, sizeof(font_t));
+    memset(font, 0, sizeof(font_tt));
     font->font_buffer = font_buffer;
-    font->font_size = font_size;
-    font->atlas_width = ATLAS_WIDTH;
-    font->atlas_height = ATLAS_HEIGHT;
     
-    if (!stbtt_InitFont(&font->info, font_buffer, 0)) {
+    if (!stbtt_InitFont(&font->info, font_buffer, 0)) 
+    {
         fprintf(stderr, "Failed to initialize font\n");
         free(font);
         return NULL;
@@ -69,24 +56,11 @@ font_t* init_font(u8 *font_buffer, float font_size)
     font->descent = (int)(font->descent * font->scale);
     font->line_gap = (int)(font->line_gap * font->scale);
     
-    // Allocate atlas
-    font->atlas = calloc(ATLAS_WIDTH * ATLAS_HEIGHT, sizeof(u8));
-    if (!font->atlas) {
-        free(font);
-        return NULL;
-    }
-    
-    // Bake all ASCII glyphs into atlas
-    if (!bake_font_atlas(font)) {
-        free(font->atlas);
-        free(font);
-        return NULL;
-    }
-    
     return font;
 }
 
-font_t* load_font_from_file(const char *filename, float font_size)
+// Load font from file
+font_tt* load_font_from_file(const char *filename, f32 font_size)
 {
     FILE *file = fopen(filename, "rb");
     if (!file) {
@@ -107,101 +81,19 @@ font_t* load_font_from_file(const char *filename, float font_size)
     fread(buffer, 1, size, file);
     fclose(file);
     
-    return init_font(buffer, font_size);
+    return init_font_tt(buffer, font_size);
 }
 
-// Pack a glyph into the atlas
-int pack_glyph(font_t *font, int codepoint, u8 *bitmap, int w, int h, 
-               int bearing_x, int bearing_y, float advance)
-{
-    // Check if glyph fits in current row
-    if (font->pack_x + w > font->atlas_width) {
-        // Move to next row
-        font->pack_x = 0;
-        font->pack_y += font->row_height;
-        font->row_height = 0;
-    }
-    
-    // Check if we have enough vertical space
-    if (font->pack_y + h > font->atlas_height) {
-        fprintf(stderr, "Atlas full! Cannot pack more glyphs\n");
-        return 0;
-    }
-    
-    int glyph_idx = codepoint - ASCII_LOW;
-    if (glyph_idx < 0 || glyph_idx >= GLYPH_COUNT) {
-        return 0;
-    }
-    
-    // Store glyph info
-    font->glyphs[glyph_idx] = (glyph_info_t){
-        .x = font->pack_x,
-        .y = font->pack_y,
-        .w = w,
-        .h = h,
-        .bearing_x = bearing_x,
-        .bearing_y = bearing_y,
-        .advance = advance
-    };
-    
-    // Copy bitmap to atlas
-    for (int y = 0; y < h; y++) {
-        for (int x = 0; x < w; x++) {
-            int atlas_idx = (font->pack_y + y) * font->atlas_width + (font->pack_x + x);
-            int bitmap_idx = y * w + x;
-            font->atlas[atlas_idx] = bitmap[bitmap_idx];
-        }
-    }
-    
-    // Update packing position
-    font->pack_x += w + 1; // Add 1 pixel padding
-    if (h > font->row_height) {
-        font->row_height = h + 1; // Add 1 pixel padding
-    }
-    
-    return 1;
-}
 
-// Bake all ASCII characters into the atlas
-int bake_font_atlas(font_t *font)
-{
-    font->pack_x = 0;
-    font->pack_y = 0;
-    font->row_height = 0;
-    
-    for (int codepoint = ASCII_LOW; codepoint <= ASCII_HIGH; codepoint++) {
-        int advance, left_bearing;
-        stbtt_GetCodepointHMetrics(&font->info, codepoint, &advance, &left_bearing);
-        
-        int w, h, xoff, yoff;
-        u8 *bitmap = stbtt_GetCodepointBitmap(&font->info, 0, font->scale,
-                                              codepoint, &w, &h, &xoff, &yoff);
-        
-        if (bitmap) {
-            float scaled_advance = advance * font->scale;
-            
-            if (!pack_glyph(font, codepoint, bitmap, w, h, xoff, yoff, scaled_advance)) {
-                stbtt_FreeBitmap(bitmap, NULL);
-                return 0;
-            }
-            
-            stbtt_FreeBitmap(bitmap, NULL);
-        } else {
-            // Handle characters without bitmaps (like space)
-            float scaled_advance = advance * font->scale;
-            pack_glyph(font, codepoint, NULL, 0, 0, 0, 0, scaled_advance);
-        }
-    }
-    
-    return 1;
-}
-
-void free_font(font_t *font)
+void free_font(font_tt *font)
 {
     if (!font) return;
     
-    if (font->atlas) {
-        free(font->atlas);
+    // Free cached glyph bitmaps
+    for (int i = 0; i < GLYPH_CACHE_SIZE; i++) {
+        if (font->cache_valid[i] && font->glyph_cache[i].bitmap) {
+            free(font->glyph_cache[i].bitmap);
+        }
     }
     
     if (font->font_buffer) {
@@ -211,67 +103,107 @@ void free_font(font_t *font)
     free(font);
 }
 
-// Fast atlas sampling for glyph rendering
-void render_glyph_to_buffer(rendered_text_t *text, int codepoint,
-                           image_view_t const *color_buf,
-                           u32 dst_x, u32 dst_y)
+glyph_info_t* get_glyph(font_tt *font, u32 codepoint)
 {
-    int glyph_idx = codepoint - ASCII_LOW;
-    if (glyph_idx < 0 || glyph_idx >= GLYPH_COUNT) {
+    int cache_index = codepoint % GLYPH_CACHE_SIZE;
+    
+    // Check if already cached
+    if (font->cache_valid[cache_index]) {
+        return &font->glyph_cache[cache_index];
+    }
+    
+    glyph_info_t *glyph = &font->glyph_cache[cache_index];
+    
+    // Clean up old glyph if exists
+    if (glyph->bitmap) {
+        free(glyph->bitmap);
+        glyph->bitmap = NULL;
+    }
+
+    int glyph_index = stbtt_FindGlyphIndex(&font->info, codepoint);
+    if (glyph_index == 0) {
+        codepoint = '?';
+    }
+    
+    // Get glyph metrics
+    int advance, left_bearing;
+    stbtt_GetCodepointHMetrics(&font->info, codepoint, &advance, &left_bearing);
+    
+    glyph->advance = advance * font->scale;
+    
+    // Get glyph bitmap
+    int w, h, xoff, yoff;
+    u8 *bitmap = stbtt_GetGlyphBitmap(&font->info, 0, font->scale,
+                                      glyph_index, &w, &h, &xoff, &yoff);
+    
+    if (bitmap == NULL) {
+        glyph->w = glyph->h = 0;
+        glyph->bitmap = NULL;
+        return glyph;
+    }
+
+    glyph->w = w;
+    glyph->h = h;
+    glyph->bearing_x = xoff;
+    glyph->bearing_y = yoff;
+    glyph->bitmap = bitmap;
+    
+    font->cache_valid[cache_index] = 1;
+    
+    return glyph;
+}
+
+void render_glyph_to_buffer_tt(font_tt *font, u32 codepoint, 
+                           image_view_t const *color_buf,
+                           u32 dst_x, u32 dst_y, color4_t color)
+{
+    glyph_info_t *glyph = get_glyph(font, codepoint);
+    if (!glyph || !glyph->bitmap){
         return;
     }
     
-    const glyph_info_t *glyph = &text->font->glyphs[glyph_idx];
-    
-    // Skip empty glyphs (like space)
-    if (glyph->w == 0 || glyph->h == 0) {
-        return;
-    }
-    
-    u32 scaled_w = (u32)(glyph->w * text->scale);
-    u32 scaled_h = (u32)(glyph->h * text->scale);
-    
-    int render_x = (int)dst_x + (int)(glyph->bearing_x * text->scale);
-    int render_y = (int)dst_y + text->font->ascent + (int)(glyph->bearing_y * text->scale);
+    int render_x = (int)dst_x + (int)glyph->bearing_x;
+    int render_y = (int)dst_y + font->ascent + (int)glyph->bearing_y;
     
     // Bounds checking
-    if (render_x >= (int)color_buf->width || render_y >= (int)color_buf->height ||
-        render_x + (int)scaled_w <= 0 || render_y + (int)scaled_h <= 0) {
+    if (render_x >= (int)color_buf->width || 
+        render_y >= (int)color_buf->height ||
+        render_x + glyph->w <= 0 || 
+        render_y + glyph->h <= 0) 
+    {
         return;
     }
     
-    u32 x_start = (render_x < 0) ? 0 : render_x;
-    u32 y_start = (render_y < 0) ? 0 : render_y;
-    u32 x_end = (render_x + (int)scaled_w > (int)color_buf->width) ? 
-                color_buf->width : render_x + scaled_w;
-    u32 y_end = (render_y + (int)scaled_h > (int)color_buf->height) ? 
-                color_buf->height : render_y + scaled_h;
+    int x_start = (render_x < 0) ? 0 : render_x;
+    int y_start = (render_y < 0) ? 0 : render_y;
+    int x_end = (render_x + glyph->w > (int)color_buf->width) ? 
+                (int)color_buf->width : render_x + glyph->w;
+    int y_end = (render_y + glyph->h > (int)color_buf->height) ? 
+                (int)color_buf->height : render_y + glyph->h;
     
-    float x_scale = (float)glyph->w / scaled_w;
-    float y_scale = (float)glyph->h / scaled_h;
-    
-    // Sample from atlas
-    for (u32 y = y_start; y < y_end; y++) {
-        for (u32 x = x_start; x < x_end; x++) {
-            u32 rel_x = x - render_x;
-            u32 rel_y = y - render_y;
+    for (int y = y_start; y < y_end; y++) 
+    {
+        for (int x = x_start; x < x_end; x++) 
+        {
+            int src_x = (int)(x - render_x);
+            int src_y = (int)(y - render_y);
             
-            u32 atlas_x = glyph->x + (u32)(rel_x * x_scale);
-            u32 atlas_y = glyph->y + (u32)(rel_y * y_scale);
-            
-            if (atlas_x < glyph->x + glyph->w && atlas_y < glyph->y + glyph->h) {
-                u32 atlas_idx = atlas_y * text->font->atlas_width + atlas_x;
-                u8 alpha = text->font->atlas[atlas_idx];
+            if (src_x >= 0 && src_x < (int)glyph->w && 
+                src_y >= 0 && src_y < (int)glyph->h) 
+            {
                 
-                if (alpha > 0) {
+                u8 alpha = glyph->bitmap[src_y * glyph->w + src_x];
+                
+                if (alpha > 0) 
+                {
                     // Alpha blending
                     float a = alpha / 255.0f;
                     color4_t dst_pixel = BUF_AT(color_buf, x, y);
                     
                     color4_t blended = {
-                        (u32)(text->color.r * a + dst_pixel.r * (1.0f - a)),
-                        (u32)(text->color.g * a + dst_pixel.g * (1.0f - a)),
-                        (u32)(text->color.b * a + dst_pixel.b * (1.0f - a)),
+                        (u32)(color.r * a + dst_pixel.r * (1.0f - a)),
+                        (u32)(color.g * a + dst_pixel.g * (1.0f - a)),
+                        (u32)(color.b * a + dst_pixel.b * (1.0f - a)),
                         255
                     };
                     
@@ -282,78 +214,22 @@ void render_glyph_to_buffer(rendered_text_t *text, int codepoint,
     }
 }
 
-void render_string(image_view_t const *color_buf, rendered_text_t *text)
-{
-    if (!text || !text->string || !text->font) return;
-    
-    char *string = text->string;
-    float x = text->pos.x;
-    float y = text->pos.y;
-    float original_x = x;
-    
-    int line_height = text->font->ascent - text->font->descent + text->font->line_gap;
-    
-    while (*string) {
-        if (*string == '\n') {
-            y += line_height * text->scale;
-            x = original_x;
-            string++;
-            continue;
-        }
-        
-        if (*string == '\t') {
-            // Tab handling - advance by 4 spaces worth
-            int space_idx = ' ' - ASCII_LOW;
-            if (space_idx >= 0 && space_idx < GLYPH_COUNT) {
-                x += text->font->glyphs[space_idx].advance * text->scale * 4;
-            }
-            string++;
-            continue;
-        }
-        
-        if (*string >= ASCII_LOW && *string <= ASCII_HIGH) {
-            render_glyph_to_buffer(text, *string, color_buf, (u32)x, (u32)y);
-            
-            int glyph_idx = *string - ASCII_LOW;
-            x += text->font->glyphs[glyph_idx].advance * text->scale;
-        }
-        
-        string++;
-    }
-}
-
-// Convenience function for simple text rendering
-void render_text_simple(image_view_t const *color_buf, font_t *font, 
-                       const char *text, float x, float y, float scale, 
-                       color4_t color)
-{
-    rendered_text_t render_info = {
-        .font = font,
-        .string = (char*)text,
-        .pos = {x, y},
-        .scale = scale,
-        .color = color
-    };
-    
-    render_string(color_buf, &render_info);
-}
-
-// Get string width for layout purposes
-float get_string_width(font_t *font, const char *text, float scale)
+float get_string_width(font_tt *font, const char *text)
 {
     if (!text || !font) return 0.0f;
     
     float width = 0.0f;
     const char *p = text;
     
-    while (*p) {
+    while (*p) 
+    {
         if (*p == '\n') {
             break; // Only measure until newline
         }
         
-        if (*p >= ASCII_LOW && *p <= ASCII_HIGH) {
-            int glyph_idx = *p - ASCII_LOW;
-            width += font->glyphs[glyph_idx].advance * scale;
+        glyph_info_t *glyph = get_glyph(font, *p);
+        if (glyph) {
+            width += glyph->advance;
         }
         p++;
     }
@@ -361,19 +237,231 @@ float get_string_width(font_t *font, const char *text, float scale)
     return width;
 }
 
-int get_line_height(font_t *font)
+int get_line_height(font_tt *font)
 {
     return font->ascent - font->descent + font->line_gap;
 }
 
-// Optional: Save atlas to file for debugging
-void save_atlas_to_file(font_t *font, const char *filename)
+void render_string_tt(image_view_t const *color_buf, rendered_text_tt *text)
 {
-    FILE *file = fopen(filename, "wb");
-    if (!file) return;
+    if (!text || !text->string || !text->font){
+        return;
+    }
     
-    // Simple PGM format
-    fprintf(file, "P5\n%d %d\n255\n", font->atlas_width, font->atlas_height);
-    fwrite(font->atlas, 1, font->atlas_width * font->atlas_height, file);
-    fclose(file);
+    char *string = text->string;
+    float x = text->pos.x;
+    float y = text->pos.y;
+    float original_x = x;
+    
+    int line_height = get_line_height(text->font);
+    
+    while (*string) 
+    {
+        if (*string == '\n') 
+        {
+            y += line_height ;
+            x = original_x;
+            string++;
+            continue;
+        }
+        
+        if (*string == '\t') 
+        {
+            glyph_info_t *space_glyph = get_glyph(text->font, ' ');
+            if (space_glyph) {
+                x += space_glyph->advance * TAB_SIZE;
+            }
+            string++;
+            continue;
+        }
+        
+        render_glyph_to_buffer_tt(text->font, *string, color_buf, (u32)x, (u32)y, text->color);
+        
+        glyph_info_t *glyph = get_glyph(text->font, *string);
+        if (glyph) {
+            x += glyph->advance ;
+        }
+        string++;
+    }
+}
+
+void render_text_simple(image_view_t const *color_buf, font_tt *font, 
+                       const char *text, float x, float y, color4_t color)
+{
+    rendered_text_tt render_info = {
+        .font = font,
+        .string = (char*)text,
+        .pos = {x, y},
+        .color = color
+    };
+    
+    render_string_tt(color_buf, &render_info);
+}
+
+typedef struct {
+    const char *str;
+    size_t pos;
+} utf8_decoder_t;
+
+void utf8_decoder_init(utf8_decoder_t *decoder, const char *str)
+{
+    decoder->str = str;
+    decoder->pos = 0;
+}
+
+int utf8_decode_next(utf8_decoder_t *decoder, u32 *out_char)
+{
+    const char *s = decoder->str + decoder->pos;
+    if (*s == '\0') return 0;
+    
+    unsigned char c = (unsigned char)*s;
+    u32 codepoint;
+    int bytes;
+    
+    if (c < 0x80) {
+        // 1-byte sequence
+        codepoint = c;
+        bytes = 1;
+    } else if ((c & 0xE0) == 0xC0) {
+        // 2-byte sequence
+        codepoint = c & 0x1F;
+        bytes = 2;
+    } else if ((c & 0xF0) == 0xE0) {
+        // 3-byte sequence
+        codepoint = c & 0x0F;
+        bytes = 3;
+    } else if ((c & 0xF8) == 0xF0) {
+        // 4-byte sequence
+        codepoint = c & 0x07;
+        bytes = 4;
+    } else {
+        // Invalid UTF-8
+        *out_char = '?';
+        decoder->pos++;
+        return 1;
+    }
+    
+    // Decode continuation bytes
+    for (int i = 1; i < bytes; i++) 
+    {
+        c = (unsigned char)s[i];
+        if ((c & 0xC0) != 0x80) {
+            // Invalid continuation byte
+            *out_char = '?';
+            decoder->pos++;
+            return 1;
+        }
+        codepoint = (codepoint << 6) | (c & 0x3F);
+    }
+    
+    // Check for overlong encoding
+    if ((bytes == 2 && codepoint < 0x80) ||
+        (bytes == 3 && codepoint < 0x800) ||
+        (bytes == 4 && codepoint < 0x10000)) 
+    {
+        *out_char = '?';
+        decoder->pos++;
+        return 1;
+    }
+    
+    // Check for invalid codepoints
+    if (codepoint > 0x10FFFF || (codepoint >= 0xD800 && codepoint <= 0xDFFF)) 
+    {
+        *out_char = '?';
+        decoder->pos += bytes;
+        return 1;
+    }
+    
+    *out_char = codepoint;
+    decoder->pos += bytes;
+    return bytes;
+}
+
+void init_unicode_support()
+{
+    #ifdef _WIN32
+        SetConsoleOutputCP(CP_UTF8);
+    #else
+        setlocale(LC_ALL, "en_US.UTF-8");
+    #endif
+}
+
+
+float get_string_width_unicode(font_tt *font, const char *utf8_str, float scale)
+{
+    if (!utf8_str || !font) return 0.0f;
+    
+    float width = 0.0f;
+    utf8_decoder_t decoder;
+    utf8_decoder_init(&decoder, utf8_str);
+    
+    u32 wc;
+    while (utf8_decode_next(&decoder, &wc)) {
+        if (wc == '\n') {
+            break;
+        }
+        
+        glyph_info_t *glyph = get_glyph(font, wc);
+        if (glyph) {
+            width += glyph->advance * scale;
+        }
+    }
+    
+    return width;
+}
+
+void render_string_unicode(image_view_t const *color_buf, rendered_text_tt *text)
+{
+    if (!text || !text->string || !text->font) return;
+    
+    const char *utf8_str = text->string;
+    float x = text->pos.x;
+    float y = text->pos.y;
+    float original_x = x;
+    
+    int line_height = get_line_height(text->font);
+    utf8_decoder_t decoder;
+    utf8_decoder_init(&decoder, utf8_str);
+    
+    u32 wc;
+    while (utf8_decode_next(&decoder, &wc)) 
+    {
+        if (wc == '\n') {
+            y += line_height;
+            x = original_x;
+            continue;
+        }
+        
+        if (wc == '\t') {
+            glyph_info_t *space_glyph = get_glyph(text->font, ' ');
+            if (space_glyph) {
+                x += space_glyph->advance  * 4;
+            }
+            continue;
+        }
+        
+        render_glyph_to_buffer_tt(text->font, wc, color_buf, 
+                                 (u32)x, (u32)y, text->color);
+        
+        glyph_info_t *glyph = get_glyph(text->font, wc);
+        if (glyph) {
+            x += glyph->advance;
+        }
+    }
+}
+
+size_t utf8_strlen(const char *utf8_str)
+{
+    if (!utf8_str) return 0;
+    
+    size_t count = 0;
+    utf8_decoder_t decoder;
+    utf8_decoder_init(&decoder, utf8_str);
+    
+    u32 wc;
+    while (utf8_decode_next(&decoder, &wc)) {
+        count++;
+    }
+    
+    return count;
 }
