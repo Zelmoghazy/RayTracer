@@ -750,6 +750,7 @@ void render_n_string_abs(image_view_t const *color_buf, rendered_text_t *text)
     }
 }
 
+// check whether a point is inside a rectangle
 bool inside_rect(i32 x, i32 y, rect_t *s)
 {
     bool check_x = (x >= s->x) && (x < (s->x + (i32)s->w));
@@ -779,6 +780,7 @@ rect_t intersect_rects(const rect_t *a, const rect_t *b)
 }
 
 // Update the current effective scissor rectangle
+// Combine nested scissor regions to create a final clipping area
 void update_current_scissor(void)
 {
     if (scissor_stack_size == 0) {
@@ -817,7 +819,7 @@ void update_current_scissor(void)
 bool push_scissor(i32 x, i32 y, u32 width, u32 height)
 {
     if (scissor_stack_size >= MAX_SCISSOR_STACK) {
-        return false; // Stack overflow
+        return false; 
     }
     
     scissor_region_t region = {0};
@@ -923,4 +925,140 @@ void clear_scissor_stack()
 {
     scissor_stack_size = 0;
     scissor_enabled = false;
+}
+
+animation_t animation_items[ANIMATION_MAX_ITEMS];
+int animation_item_count;
+
+/* https://easings.net/ */
+f64 apply_easing(f64 t, easing_type easing) 
+{
+    switch (easing) 
+    {
+        case EASE_LINEAR:
+            return t;
+            
+        case EASE_IN_QUAD:
+            return t * t;
+            
+        case EASE_OUT_QUAD:
+            return t * (2.0 - t);
+            
+        case EASE_IN_OUT_QUAD:
+            if (t < 0.5) return 2.0 * t * t;
+            return -1.0 + (4.0 - 2.0 * t) * t;
+            
+        case EASE_IN_CUBIC:
+            return t * t * t;
+            
+        case EASE_OUT_CUBIC:
+            return (--t) * t * t + 1.0;
+            
+        case EASE_IN_OUT_CUBIC:
+            if (t < 0.5) return 4.0 * t * t * t;
+            return (t - 1.0) * (2.0 * t - 2.0) * (2.0 * t - 2.0) + 1.0;
+            
+        case EASE_IN_SINE:
+            return 1.0 - (f64)cosf(t * M_PI_2);
+            
+        case EASE_OUT_SINE:
+            return (f64)sinf(t * M_PI_2);
+            
+        case EASE_IN_OUT_SINE:
+            return -0.5 * ((f64)cosf(M_PI * t) - 1.0);
+
+        case EASE_OUT_BOUNCE:
+            const f64 n1 = 7.5625;
+            const f64 d1 = 2.75;
+
+            if (t < 1.0 / d1) {
+                return n1 * t * t;
+            } else if (t < 2.0 / d1) {
+                return n1 * (t -= 1.5 / d1) * t + 0.75;
+            } else if (t < 2.5 / d1) {
+                return n1 * (t -= 2.25 / d1) * t + 0.9375;
+            } else {
+                return n1 * (t -= 2.625 / d1) * t + 0.984375;
+            }
+        default:
+            return t;
+    }
+}
+
+void animation_start(u64 id, f32 start_x, f32 start_y, 
+                     f32 target_x, f32 target_y, 
+                     f32 duration, easing_type easing) 
+{
+    for (int i = 0; i < animation_item_count; i++) 
+    {
+        animation_t *it = &animation_items[i];
+        if (it->id == id) {
+            // it->elapsed = 0;      
+            it->start_x = it->current_x;
+            it->start_y = it->current_y;      
+            it->target_x = target_x;
+            it->target_y = target_y;
+            it->elapsed = 0;
+            it->duration = duration;
+            return;
+        }
+    }
+
+    // push new item if we have room
+    if (animation_item_count < ANIMATION_MAX_ITEMS) 
+    {
+        animation_items[animation_item_count++] = (animation_t){
+            .id = id,
+            .start_x = start_x,
+            .start_y = start_y,
+            .target_x = target_x,
+            .target_y = target_y,
+            .easing = easing,
+            .duration = duration,
+            .elapsed = 0,
+            .done = false
+        };
+    }
+}
+
+void animation_update(f64 dt) 
+{
+    for(int i = animation_item_count-1; i>=0; i--)
+    {
+        animation_t *anim = &animation_items[i];
+        
+        anim->elapsed += dt;
+        
+        if (anim->elapsed >= anim->duration) 
+        {
+            anim->done = true;
+            // clamp it to target
+            anim->current_x = anim->target_x;
+            anim->current_y = anim->target_y;
+            // remove it from the list when done
+            // just replace it with the last item and decrement the count
+            *anim = animation_items[--animation_item_count];
+            continue;
+        }
+        
+        // progress in animation
+        f64 t = anim->elapsed / anim->duration;
+        f64 eased_t = apply_easing(t, anim->easing);
+        
+        anim->current_x = LERP_F32(anim->start_x, anim->target_x, eased_t);
+        anim->current_y = LERP_F32(anim->start_y, anim->target_y, eased_t);
+    }
+}
+
+void animation_get(u64 id, f32 *current_x, f32 *current_y)
+{
+    for (int i = 0; i < animation_item_count; i++) 
+    {
+        animation_t *it = &animation_items[i];
+
+        if (it->id == id) {
+            *current_x = it->current_x;
+            *current_y = it->current_y;
+        }
+    }
 }

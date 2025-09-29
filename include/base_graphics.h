@@ -44,6 +44,36 @@ typedef struct scissor_region_t
     bool enabled;
 }scissor_region_t;
 
+typedef enum {
+    EASE_LINEAR,
+    EASE_IN_QUAD,
+    EASE_OUT_QUAD,
+    EASE_IN_OUT_QUAD,
+    EASE_IN_CUBIC,
+    EASE_OUT_CUBIC,
+    EASE_IN_OUT_CUBIC,
+    EASE_IN_SINE,
+    EASE_OUT_SINE,
+    EASE_IN_OUT_SINE,
+    EASE_OUT_BOUNCE
+}easing_type;
+
+typedef struct {
+    u64         id;
+    f32         start_x, start_y;
+    f32         current_x, current_y;
+    f32         target_x, target_y;
+    f64         duration;
+    f64         elapsed;
+    easing_type easing;
+    bool        done;
+}animation_t;
+
+#define ANIMATION_MAX_ITEMS 32
+
+extern animation_t animation_items[ANIMATION_MAX_ITEMS];
+extern int animation_item_count;
+
 #define RGBA_TO_U32(r, g, b, a)  ((unsigned)(r) | ((unsigned)(g) << 8) | ((unsigned)(b) << 16) | ((unsigned)(a) << 24))
 #define HEX_TO_COLOR4(hex) (color4_t){((hex >> 16) & 0xFF), ((hex >> 8) & 0xFF), (hex & 0xFF), 255}   
 #define HEX_TO_RGBA(s,hex)  \
@@ -127,5 +157,10 @@ void clip_rect_to_current_scissor(i32 *x, i32 *y, u32 *width, u32 *height);
 void set_pixel_scissored(image_view_t const *img, i32 x, i32 y, color4_t color);
 void draw_rect_scissored(image_view_t const *img, i32 x, i32 y, u32 width, u32 height, color4_t color);
 void clear_scissor_stack();
+
+f64 apply_easing(f64 t, easing_type easing);
+void animation_start(u64 id, f32 start_x, f32 start_y, f32 target_x, f32 target_y, f32 duration, easing_type easing);
+void animation_update(f64 dt);
+void animation_get(u64 id, f32 *current_x, f32 *current_y);
 
 #endif

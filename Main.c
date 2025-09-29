@@ -13,44 +13,6 @@
 #include "./include/arena.h"
 #include "./include/base_graphics.h"
 
-thread_handle_t create_thread(thread_func_t func, thread_func_param_t data)
-{
-    #ifdef _WIN32
-        return CreateThread(NULL,  // security attribute -no idea- NULL means default 
-                             0,    // stack size zero means default size 
-                             func, // pointer to the function to be executed by the thread
-                             data, // pointer to the params passed to the thread
-                              0,   // run immediately
-                              NULL // dont return identifier
-                            );
-    #else
-        pthread_t thread;
-        pthread_create(&thread, NULL, func, data);
-        return thread;
-    #endif
-}
-
-void join_thread(thread_handle_t thread) 
-{
-    #ifdef _WIN32
-        WaitForSingleObject(thread, INFINITE);
-        CloseHandle(thread);
-    #else
-        pthread_join(thread, NULL);
-    #endif
-}
-
-int get_core_count(void) 
-{
-    #ifdef _WIN32
-        SYSTEM_INFO sysinfo;
-        GetSystemInfo(&sysinfo);
-        return sysinfo.dwNumberOfProcessors;
-    #else
-        return sysconf(_SC_NPROCESSORS_ONLN);
-    #endif
-}
-
 typedef struct ray_t
 {
     vec3f_t  orig;
@@ -309,7 +271,7 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height)
     glViewport(0, 0, gc.screen_width, gc.screen_height);
 }
 
-void errorCallback(int error, const char* description) 
+void error_callback(int error, const char* description) 
 {
     fprintf(stderr, "GLFW Error %d: %s\n", error, description);
 }
@@ -319,7 +281,7 @@ void window_refresh_callback(GLFWwindow* window)
     glfwSwapBuffers(window);
 }
 
-void getMouseDelta(f32 *xoffset, f32 *yoffset)
+void get_mouse_delta(f32 *xoffset, f32 *yoffset)
 {
     if (gc.firstMouse)
     {
@@ -343,7 +305,7 @@ void mouse_callback(GLFWwindow* window, f64 xpos, f64 ypos)
     gc.mouseY = (u32)ypos;
 
     f32 xoffset, yoffset;
-    getMouseDelta(&xoffset, &yoffset);
+    get_mouse_delta(&xoffset, &yoffset);
 
     if(gc.right_button_down)
     {
@@ -384,7 +346,7 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
     }
 }
 
-void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) 
+void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) 
 {
     (void)window;
     (void)scancode;
@@ -500,7 +462,7 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
     }
 }
 
-void charCallback(GLFWwindow* window, unsigned int codepoint) 
+void char_callback(GLFWwindow* window, unsigned int codepoint) 
 {
     (void)window;
 
@@ -511,16 +473,13 @@ void charCallback(GLFWwindow* window, unsigned int codepoint)
 
 void set_dark_mode(GLFWwindow *window)
 {
-    (void)window;
-    #if 0
     #ifdef _WIN32
-        HWND hwnd = /**/0;
-
+        HWND hwnd = glfwGetWin32Window(window);
+        if (!hwnd) return;
         BOOL value = TRUE;
         DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &value, sizeof(value));
         SetWindowTheme(hwnd, L"DarkMode_Explorer", NULL);
         SetWindowPos(hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
-    #endif
     #endif
 }
 
@@ -991,178 +950,17 @@ void render_to_screen(void *pixels, u32 width, u32 height)
                       GL_NEAREST);      
 }
 
-typedef enum {
-    EASE_LINEAR,
-    EASE_IN_QUAD,
-    EASE_OUT_QUAD,
-    EASE_IN_OUT_QUAD,
-    EASE_IN_CUBIC,
-    EASE_OUT_CUBIC,
-    EASE_IN_OUT_CUBIC,
-    EASE_IN_SINE,
-    EASE_OUT_SINE,
-    EASE_IN_OUT_SINE,
-    EASE_OUT_BOUNCE
-}easing_type;
-
-typedef struct {
-    u64         id;
-    f32         start_x, start_y;
-    f32         current_x, current_y;
-    f32         target_x, target_y;
-    f64         duration;
-    f64         elapsed;
-    easing_type easing;
-    bool        done;
-}animation_t;
-
-#define ANIMATION_MAX_ITEMS 32
-animation_t animation_items[ANIMATION_MAX_ITEMS];
-int animation_item_count;
-
-/* https://easings.net/ */
-f64 apply_easing(f64 t, easing_type easing) 
-{
-    switch (easing) 
-    {
-        case EASE_LINEAR:
-            return t;
-            
-        case EASE_IN_QUAD:
-            return t * t;
-            
-        case EASE_OUT_QUAD:
-            return t * (2.0 - t);
-            
-        case EASE_IN_OUT_QUAD:
-            if (t < 0.5) return 2.0 * t * t;
-            return -1.0 + (4.0 - 2.0 * t) * t;
-            
-        case EASE_IN_CUBIC:
-            return t * t * t;
-            
-        case EASE_OUT_CUBIC:
-            return (--t) * t * t + 1.0;
-            
-        case EASE_IN_OUT_CUBIC:
-            if (t < 0.5) return 4.0 * t * t * t;
-            return (t - 1.0) * (2.0 * t - 2.0) * (2.0 * t - 2.0) + 1.0;
-            
-        case EASE_IN_SINE:
-            return 1.0 - (f64)cosf(t * M_PI_2);
-            
-        case EASE_OUT_SINE:
-            return (f64)sinf(t * M_PI_2);
-            
-        case EASE_IN_OUT_SINE:
-            return -0.5 * ((f64)cosf(M_PI * t) - 1.0);
-
-        case EASE_OUT_BOUNCE:
-            const f64 n1 = 7.5625;
-            const f64 d1 = 2.75;
-
-            if (t < 1.0 / d1) {
-                return n1 * t * t;
-            } else if (t < 2.0 / d1) {
-                return n1 * (t -= 1.5 / d1) * t + 0.75;
-            } else if (t < 2.5 / d1) {
-                return n1 * (t -= 2.25 / d1) * t + 0.9375;
-            } else {
-                return n1 * (t -= 2.625 / d1) * t + 0.984375;
-            }
-        default:
-            return t;
-    }
-}
-
-void animation_start(u64 id, f32 start_x, f32 start_y, 
-                     f32 target_x, f32 target_y, 
-                     f32 duration, easing_type easing) 
-{
-    for (int i = 0; i < animation_item_count; i++) 
-    {
-        animation_t *it = &animation_items[i];
-        if (it->id == id) {
-            // it->elapsed = 0;      
-            it->start_x = it->current_x;
-            it->start_y = it->current_y;      
-            it->target_x = target_x;
-            it->target_y = target_y;
-            it->elapsed = 0;
-            it->duration = duration;
-            return;
-        }
-    }
-
-    // push new item if we have room
-    if (animation_item_count < ANIMATION_MAX_ITEMS) 
-    {
-        animation_items[animation_item_count++] = (animation_t){
-            .id = id,
-            .start_x = start_x,
-            .start_y = start_y,
-            .target_x = target_x,
-            .target_y = target_y,
-            .easing = easing,
-            .duration = duration,
-            .elapsed = 0,
-            .done = false
-        };
-    }
-}
-
-void animation_update(f64 dt) 
-{
-    for(int i = animation_item_count-1; i>=0; i--)
-    {
-        animation_t *anim = &animation_items[i];
-        
-        anim->elapsed += dt;
-        
-        if (anim->elapsed >= anim->duration) 
-        {
-            anim->done = true;
-            // clamp it to target
-            anim->current_x = anim->target_x;
-            anim->current_y = anim->target_y;
-            // remove it from the list when done
-            // just replace it with the last item and decrement the count
-            *anim = animation_items[--animation_item_count];
-            continue;
-        }
-        
-        // progress in animation
-        f64 t = anim->elapsed / anim->duration;
-        f64 eased_t = apply_easing(t, anim->easing);
-        
-        anim->current_x = LERP_F32(anim->start_x, anim->target_x, eased_t);
-        anim->current_y = LERP_F32(anim->start_y, anim->target_y, eased_t);
-    }
-}
-
-void animation_get(u64 id, f32 *current_x, f32 *current_y)
-{
-    for (int i = 0; i < animation_item_count; i++) 
-    {
-        animation_t *it = &animation_items[i];
-
-        if (it->id == id) {
-            *current_x = it->current_x;
-            *current_y = it->current_y;
-        }
-    }
-}
-
 typedef struct {
     u32 start_x, end_x;
     u32 start_y, end_y;
     u32 width, height;
 } tile_data_t;
 
-
 thread_func_ret_t render_tile(thread_func_param_t data) 
 {
     tile_data_t *tile = (tile_data_t *)data;
+
+    fast_srand(tile->start_x * 1000 + tile->start_y + 1);
 
     vec3f_t color;
     
@@ -1201,7 +999,7 @@ void render_all_parallel(void)
 
     clear_screen(&gc.draw_buffer, HEX_TO_COLOR4(0x282a36));
 
-    int num_threads = get_core_count();
+    int num_threads = get_core_count()*2;
     const u32 tile_size = 64;
 
     u32 tiles_x = CEIL_DIV(width, tile_size);
@@ -1211,7 +1009,7 @@ void render_all_parallel(void)
     tile_data_t* tiles = ARENA_ALLOC(gc.frame_arena, total_tiles * sizeof(tile_data_t));
     thread_handle_t* threads = ARENA_ALLOC(gc.frame_arena, num_threads * sizeof(thread_handle_t));
 
-    u32 tile_idx = 0;
+    i32 tile_idx = 0;
     
     for (u32 ty = 0; ty < tiles_y; ty++) 
     {
@@ -1232,7 +1030,9 @@ void render_all_parallel(void)
             int thread_slot = tile_idx % num_threads;
             
             if (tile_idx >= num_threads) {
-                join_thread(threads[thread_slot]);
+                PROFILE("Waiting for a slot"){
+                    join_thread(threads[thread_slot]);
+                }
             }
             
             PROFILE("Actually creating a thread, does it matter ?")
@@ -1404,9 +1204,9 @@ void init_framebuffer(void)
 }
 
 sphere_t ground_sphere;
-sphere_t large_sphere_1;  // glass sphere at center
-sphere_t large_sphere_2;  // brown lambertian sphere
-sphere_t large_sphere_3;  // metal sphere
+sphere_t large_sphere_1;     // glass sphere at center
+sphere_t large_sphere_2;     // brown lambertian sphere
+sphere_t large_sphere_3;     // metal sphere
 sphere_t small_spheres[484]; // 22x22 grid, but some will be skipped
 
 void init_scene(void)
@@ -1537,9 +1337,9 @@ void *create_window(u32 width, u32 height, char *title)
     
     glViewport(0, 0, (int)width, (int)height);
     
-    glfwSetKeyCallback(window, keyCallback);
-    glfwSetCharCallback(window, charCallback);
-    glfwSetErrorCallback(errorCallback);
+    glfwSetKeyCallback(window, key_callback);
+    glfwSetCharCallback(window, char_callback);
+    glfwSetErrorCallback(error_callback);
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
     glfwSetWindowRefreshCallback(window, window_refresh_callback);
     glfwSetCursorPosCallback(window, mouse_callback);

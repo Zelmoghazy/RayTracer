@@ -24,15 +24,15 @@ void swap(int* a, int* b)
     *b = temp;
 }
 
-static unsigned int g_seed;
+__declspec(thread) u32 g_seed;
 
-inline void fast_srand(int seed) 
+void fast_srand(u32 seed) 
 {
     g_seed = seed;
 }
 
 // Output value in range [0, 32767]
-inline int fast_rand(void) 
+int fast_rand(void) 
 {
     g_seed = (214013*g_seed+2531011);
     return (g_seed>>16)&0x7FFF;
@@ -210,7 +210,7 @@ vec3f_t vec3f_reflect(vec3f_t v, vec3f_t n)
     return vec3f_sub(v, vec3f_scale(n, 2.0f*vec3f_dot(v, n)));
 }
 
-// Snell lay
+// Snell's Law
 vec3f_t vec3f_refract(vec3f_t v, vec3f_t n, float e)
 {
     float cos_theta = fmin(vec3f_dot(vec3f_scale(v, -1.0f), n), 1.0f);              // incident angle
@@ -219,9 +219,6 @@ vec3f_t vec3f_refract(vec3f_t v, vec3f_t n, float e)
     return vec3f_add(r_out_perp, r_out_parallel);
 }
 
-/*
-    Column major order
-*/
 mat4x4_t mat4x4_mult(mat4x4_t const *m, mat4x4_t const *n)
 {
     f32 const m00 = m->values[0];
@@ -260,46 +257,43 @@ mat4x4_t mat4x4_mult(mat4x4_t const *m, mat4x4_t const *n)
 
     mat4x4_t res;
 
-    res.values[0]  = m00*n00+m10*n01+m20*n02+m30*n03;
-    res.values[1]  = m01*n00+m11*n01+m21*n02+m31*n03;
-    res.values[2]  = m02*n00+m12*n01+m22*n02+m32*n03;
-    res.values[3]  = m03*n00+m13*n01+m23*n02+m33*n03;
-    res.values[4]  = m00*n10+m10*n11+m20*n12+m30*n13;
-    res.values[5]  = m01*n10+m11*n11+m21*n12+m31*n13;
-    res.values[6]  = m02*n10+m12*n11+m22*n12+m32*n13;
-    res.values[7]  = m03*n10+m13*n11+m23*n12+m33*n13;
-    res.values[8]  = m00*n20+m10*n21+m20*n22+m30*n23;
-    res.values[9]  = m01*n20+m11*n21+m21*n22+m31*n23;
-    res.values[10] = m02*n20+m12*n21+m22*n22+m32*n23;
-    res.values[11] = m03*n20+m13*n21+m23*n22+m33*n23;
-    res.values[12] = m00*n30+m10*n31+m20*n32+m30*n33;
-    res.values[13] = m01*n30+m11*n31+m21*n32+m31*n33;
-    res.values[14] = m02*n30+m12*n31+m22*n32+m32*n33;
-    res.values[15] = m03*n30+m13*n31+m23*n32+m33*n33;
+    res.values[0]  = m00*n00+m01*n10+m02*n20+m03*n30;  // res[0][0]
+    res.values[1]  = m00*n01+m01*n11+m02*n21+m03*n31;  // res[0][1]
+    res.values[2]  = m00*n02+m01*n12+m02*n22+m03*n32;  // res[0][2]
+    res.values[3]  = m00*n03+m01*n13+m02*n23+m03*n33;  // res[0][3]
+    res.values[4]  = m10*n00+m11*n10+m12*n20+m13*n30;  // res[1][0]
+    res.values[5]  = m10*n01+m11*n11+m12*n21+m13*n31;  // res[1][1]
+    res.values[6]  = m10*n02+m11*n12+m12*n22+m13*n32;  // res[1][2]
+    res.values[7]  = m10*n03+m11*n13+m12*n23+m13*n33;  // res[1][3]
+    res.values[8]  = m20*n00+m21*n10+m22*n20+m23*n30;  // res[2][0]
+    res.values[9]  = m20*n01+m21*n11+m22*n21+m23*n31;  // res[2][1]
+    res.values[10] = m20*n02+m21*n12+m22*n22+m23*n32;  // res[2][2]
+    res.values[11] = m20*n03+m21*n13+m22*n23+m23*n33;  // res[2][3]
+    res.values[12] = m30*n00+m31*n10+m32*n20+m33*n30;  // res[3][0]
+    res.values[13] = m30*n01+m31*n11+m32*n21+m33*n31;  // res[3][1]
+    res.values[14] = m30*n02+m31*n12+m32*n22+m33*n32;  // res[3][2]
+    res.values[15] = m30*n03+m31*n13+m32*n23+m33*n33;  // res[3][3]
     
     return res;
 }
 
-
-mat4x4_t mat4x4_mult_simd(mat4x4_t const *m, mat4x4_t const *n)
+mat4x4_t mat4x4_mult_simd(mat4x4_t const *m, mat4x4_t const *n) 
 {
     mat4x4_t res;
     
-    // Load columns of matrix m
-    __m128 col0 = _mm_load_ps(&m->values[0]);
-    __m128 col1 = _mm_load_ps(&m->values[4]);
-    __m128 col2 = _mm_load_ps(&m->values[8]);
-    __m128 col3 = _mm_load_ps(&m->values[12]);
+    __m128 n_col0 = _mm_load_ps(&n->values[0]);  // n[0,0] n[1,0] n[2,0] n[3,0]
+    __m128 n_col1 = _mm_load_ps(&n->values[4]);  // n[0,1] n[1,1] n[2,1] n[3,1]
+    __m128 n_col2 = _mm_load_ps(&n->values[8]);  // n[0,2] n[1,2] n[2,2] n[3,2]
+    __m128 n_col3 = _mm_load_ps(&n->values[12]); // n[0,3] n[1,3] n[2,3] n[3,3]
     
-    // Process each column of result
     for (int i = 0; i < 4; i++) 
     {
-        __m128 n_col = _mm_load_ps(&n->values[i*4]);
+        __m128 m_row = _mm_load_ps(&m->values[i*4]);
         
-        __m128 result = _mm_mul_ps(col0, _mm_shuffle_ps(n_col, n_col, 0x00));               // first element of n_col
-        result = _mm_add_ps(result, _mm_mul_ps(col1, _mm_shuffle_ps(n_col, n_col, 0x55)));  // second element of n_col
-        result = _mm_add_ps(result, _mm_mul_ps(col2, _mm_shuffle_ps(n_col, n_col, 0xAA)));  // third element of n_col
-        result = _mm_add_ps(result, _mm_mul_ps(col3, _mm_shuffle_ps(n_col, n_col, 0xFF)));  // fourth element of n_col
+        __m128 result = _mm_mul_ps(_mm_shuffle_ps(m_row, m_row, 0x00), n_col0);
+        result = _mm_add_ps(result, _mm_mul_ps(_mm_shuffle_ps(m_row, m_row, 0x55), n_col1));
+        result = _mm_add_ps(result, _mm_mul_ps(_mm_shuffle_ps(m_row, m_row, 0xAA), n_col2));
+        result = _mm_add_ps(result, _mm_mul_ps(_mm_shuffle_ps(m_row, m_row, 0xFF), n_col3));
         
         _mm_store_ps(&res.values[i*4], result);
     }
@@ -317,6 +311,16 @@ mat4x4_t mat_perspective(f32 n, f32 f, f32 fovY, f32 aspect_ratio)
         0.f,            n / top,   0.f,                    0.f,
         0.f,            0.f,       -(f + n) / (f - n),     - 2.f * f * n / (f - n),
         0.f,            0.f,       -1.f,                   0.f,
+    };
+}
+
+mat4x4_t mat_orthographic(f32 l, f32 r, f32 bottom, f32 t, f32 n, f32 f)
+{
+    return (mat4x4_t) {
+        2.0f / (r - l),             0.0f,                       0.0f,                   -(r + l) / (r - l),            
+        0.0f,                       2.0f / (t - bottom),        0.0f,                   -(t + bottom) / (t - bottom),  
+        0.0f,                       0.0f,                       -2.0f / (f - n),        -(f + n) / (f - n),            
+        0.0f,                       0.0f,                       0.0f,                   1.0f                           
     };
 }
 
@@ -475,5 +479,43 @@ void get_time(void *time)
     #else
         struct timespec last_frame_start;
         clock_gettime(CLOCK_MONOTONIC, (struct timespec *)time);
+    #endif
+}
+
+thread_handle_t create_thread(thread_func_t func, thread_func_param_t data)
+{
+    #ifdef _WIN32
+        return CreateThread(NULL,  // security attribute -no idea- NULL means default 
+                             0,    // stack size zero means default size 
+                             func, // pointer to the function to be executed by the thread
+                             data, // pointer to the params passed to the thread
+                              0,   // run immediately
+                              NULL // dont return identifier
+                            );
+    #else
+        pthread_t thread;
+        pthread_create(&thread, NULL, func, data);
+        return thread;
+    #endif
+}
+
+void join_thread(thread_handle_t thread) 
+{
+    #ifdef _WIN32
+        WaitForSingleObject(thread, INFINITE);
+        CloseHandle(thread);
+    #else
+        pthread_join(thread, NULL);
+    #endif
+}
+
+int get_core_count(void) 
+{
+    #ifdef _WIN32
+        SYSTEM_INFO sysinfo;
+        GetSystemInfo(&sysinfo);
+        return sysinfo.dwNumberOfProcessors;
+    #else
+        return sysconf(_SC_NPROCESSORS_ONLN);
     #endif
 }

@@ -273,8 +273,8 @@ typedef struct rect_t
 void  log_error(int error_code, const char* file, int line);
 void *check_ptr (void *ptr, const char* file, int line);
 void swap(int* a, int* b);
-inline void fast_srand(int seed);
-inline int fast_rand(void);
+void fast_srand(int seed);
+int fast_rand(void);
 
 
 vec2f_t vec2f(float x, float y);
@@ -314,6 +314,10 @@ mat4x4_t mat_rotate_zx(f32 angle);
 
 f64 get_time_difference(void *last_time);
 void get_time(void *time);
+
+thread_handle_t create_thread(thread_func_t func, thread_func_param_t data);
+void join_thread(thread_handle_t thread);
+int get_core_count(void);
 
 #define LOG_ERROR(error_code)   log_error(error_code, __FILE__, __LINE__)
 #define CHECK_PTR(ptr)          check_ptr(ptr, __FILE__, __LINE__)
